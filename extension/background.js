@@ -757,27 +757,41 @@ async function getTab(tabId) {
 const MENU_IDS = ['tb-ask', 'tb-forget-page', 'tb-forget-domain', 'tb-save-now',
                   'tb-search-selection', 'tb-pause', 'tb-open'];
 
+const MENU_SPECS = [
+  { id: 'tb-ask', title: 'Ask Twin-Brain about this page', contexts: ['page', 'action'] },
+  { id: 'tb-search-selection', title: 'Search my memory for “%s”', contexts: ['selection'] },
+  { id: 'tb-save-now', title: 'Remember this page now', contexts: ['page', 'action'] },
+  { id: 'tb-forget-page', title: "Forget this page (don't remember it)",
+    contexts: ['page', 'action'] },
+  { id: 'tb-forget-domain', title: 'Forget this whole site', contexts: ['page', 'action'] },
+  { id: 'tb-pause', title: 'Pause / resume capturing', contexts: ['action'] },
+  { id: 'tb-open', title: 'Open the Twin-Brain dashboard', contexts: ['action'] }
+];
+
+let menusReady = null;
+
 function buildMenus() {
-  try {
-    chrome.contextMenus.removeAll(() => {
-      chrome.contextMenus.create({ id: 'tb-ask', title: 'Ask Twin-Brain about this page',
-                                   contexts: ['page', 'action'] });
-      chrome.contextMenus.create({ id: 'tb-search-selection',
-                                   title: 'Search my memory for “%s”',
-                                   contexts: ['selection'] });
-      chrome.contextMenus.create({ id: 'tb-save-now', title: 'Remember this page now',
-                                   contexts: ['page', 'action'] });
-      chrome.contextMenus.create({ id: 'tb-forget-page',
-                                   title: "Forget this page (don't remember it)",
-                                   contexts: ['page', 'action'] });
-      chrome.contextMenus.create({ id: 'tb-forget-domain', title: 'Forget this whole site',
-                                   contexts: ['page', 'action'] });
-      chrome.contextMenus.create({ id: 'tb-pause', title: 'Pause / resume capturing',
-                                   contexts: ['action'] });
-      chrome.contextMenus.create({ id: 'tb-open', title: 'Open the Twin-Brain dashboard',
-                                   contexts: ['action'] });
-    });
-  } catch (error) { /* menus unavailable */ }
+  // Single-flight. onInstalled + onStartup + worker boot can all fire in one
+  // session; two overlapping removeAll->create chains race and Chrome logs
+  // "Cannot create item with duplicate id". Menus also PERSIST across service
+  // worker restarts, so the removeAll is what keeps reloads clean. Every call
+  // swallows lastError so the console stays warning-free either way.
+  if (menusReady) return menusReady;
+  menusReady = new Promise((resolve) => {
+    try {
+      chrome.contextMenus.removeAll(() => {
+        void chrome.runtime.lastError;
+        for (const spec of MENU_SPECS) {
+          chrome.contextMenus.create(spec, () => { void chrome.runtime.lastError; });
+        }
+        resolve(true);
+      });
+    } catch (error) {
+      menusReady = null;               // menus unavailable: allow a later retry
+      resolve(false);
+    }
+  });
+  return menusReady;
 }
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {

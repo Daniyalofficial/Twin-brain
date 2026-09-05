@@ -69,32 +69,54 @@
   // ---------------------------------------------------------------- connect
   async function bootstrap() {
     $('#connect').classList.add('hidden');
+    $('#app').classList.add('hidden');
+
+    // /api/health is an OPEN path: it answers 200 even with no token, so a 200
+    // here only proves the backend is up - never that we are authenticated.
+    let health = null;
     try {
-      state.health = await api('/api/health');
-      enter();
+      health = await api('/api/health');
     } catch (error) {
-      if (error.auth && state.token) {
-        localStorage.removeItem(TOKEN_KEY);
-        state.token = '';
-      }
-      // same-origin browsers may be allowed to self-pair without pasting
+      showConnect(`Backend not reachable here (${error.message}). ` +
+                  'Start it with run.bat / ./run.sh and reload this page.');
+      return;
+    }
+
+    if (!health.authenticated) {
+      // Serving this page set a SameSite pairing cookie (same origin), so the
+      // backend can hand the token to our own dashboard with zero user action.
       try {
-        const res = await fetch('/api/token');
+        const res = await fetch('/api/token', { headers: { 'X-Requested-With': 'TwinBrain' } });
         if (res.ok) {
           const data = await res.json();
           if (data && data.token) {
             state.token = data.token;
             localStorage.setItem(TOKEN_KEY, data.token);
-            state.health = await api('/api/health');
-            enter();
-            return;
+            health = await api('/api/health');
           }
         }
-      } catch { /* fall through to manual paste */ }
-      $('#app').classList.add('hidden');
-      $('#connect').classList.remove('hidden');
-      $('#connect-error').textContent = error.auth ? '' : String(error.message || error);
+      } catch { /* fall through to the manual paste form below */ }
     }
+
+    if (health.authenticated) {
+      state.health = health;
+      enter();
+      return;
+    }
+
+    if (state.token) {                    // stored token was rejected: drop it
+      localStorage.removeItem(TOKEN_KEY);
+      state.token = '';
+    }
+    showConnect('The backend is up but automatic pairing is disabled for this ' +
+                'browser. Paste the token from the terminal banner (or ' +
+                'data/token.txt) once - it will be remembered.');
+  }
+
+  function showConnect(message) {
+    $('#app').classList.add('hidden');
+    $('#connect').classList.remove('hidden');
+    $('#connect-error').textContent = message || '';
   }
 
   function enter() {
@@ -163,12 +185,17 @@
     const meta = VIEW_META[name] || ['', ''];
     $('#view-title').textContent = meta[0];
     $('#view-sub').textContent = meta[1];
-    if (name === 'memory') loadMemory(true);
-    if (name === 'sites') loadSites();
-    if (name === 'interests') loadInterests();
-    if (name === 'digest') loadDigest();
-    if (name === 'growth') loadGrowth();
-    if (name === 'settings') loadSettings();
+    // every loader reports its failures instead of leaving a dead view
+    const safe = (label, fn) => fn().catch((error) => {
+      if (error && error.auth) { bootstrap(); return; }
+      toast(`${label} could not load: ${error && error.message ? error.message : error}`, true);
+    });
+    if (name === 'memory') safe('Memory', () => loadMemory(true));
+    if (name === 'sites') safe('Sites', loadSites);
+    if (name === 'interests') safe('Interests', loadInterests);
+    if (name === 'digest') safe('Digest', loadDigest);
+    if (name === 'growth') safe('Growth', loadGrowth);
+    if (name === 'settings') safe('Settings', loadSettings);
   }
   $$('.nav-btn').forEach((btn) => btn.addEventListener('click', () => switchView(btn.dataset.view)));
   $('#head-refresh').addEventListener('click', async () => {

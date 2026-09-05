@@ -64,5 +64,21 @@ class SecurityTests(TwinBrainTestCase):
         response = self.api("post", "/api/wipe", json={"confirm": "DELETE ALL"})
         self.assertEqual(response.status_code, 200)
 
+    def test_dashboard_pages_set_the_pairing_cookie(self):
+        # this cookie is what lets a same-origin browser auto-pair at /api/token;
+        # without it the dashboard loads but every authenticated call 401s
+        for path in ("/", "/index.html", "/pair"):
+            response = self.client.get(path)
+            self.assertEqual(response.status_code, 200, path)
+            cookies = response.headers.getlist("Set-Cookie")
+            self.assertTrue(any(security.COOKIE_NAME in c for c in cookies),
+                            f"{path} must set the pairing cookie")
+
+    def test_health_says_when_unauthenticated(self):
+        # the dashboard relies on this flag: 200 alone must never mean "logged in"
+        self.client.delete_cookie(security.COOKIE_NAME)   # drop any paired session
+        body = self.client.get("/api/health").get_json()
+        self.assertFalse(body["authenticated"])
+
     def test_auth_headers_helper_matches_server_expectations(self):
         self.assertEqual(auth_headers()["X-Requested-With"], security.CUSTOM_HEADER_VALUE)

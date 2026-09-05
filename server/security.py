@@ -176,7 +176,10 @@ def check_request() -> tuple[bool, str]:
     authorised = bool(supplied) and constant_time_equals(supplied, token)
 
     if is_open_path(path):
-        if path in ("/pair", "/") and method == "GET" and get_config().auto_pair and token:
+        # serving the dashboard (or the pair page) is what lets a same-origin
+        # browser auto-pair: the cookie below is exchanged at /api/token
+        if path in ("/pair", "/", "/index.html") and method == "GET" \
+                and get_config().auto_pair and token:
             g.pair_cookie = token       # app.py sets the cookie from this
         return True, "open path"
 

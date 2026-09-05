@@ -102,6 +102,19 @@ class PrivacyListSyncTests(unittest.TestCase):
         self.assertLess(gate, inject,
                         "the privacy gate must be evaluated before any injection")
 
+    def test_context_menus_are_built_single_flight(self):
+        # onInstalled + onStartup + worker boot all call buildMenus(); without a
+        # single-flight guard the overlapping removeAll->create chains race and
+        # Chrome logs "Cannot create item with duplicate id tb-ask" etc.
+        source = read("background.js")
+        self.assertIn("menusReady", source, "buildMenus must be single-flight")
+        self.assertIn("MENU_SPECS", source, "menus must come from one spec table")
+        self.assertIn("chrome.contextMenus.create(spec", source)
+        self.assertEqual(source.count("chrome.contextMenus.removeAll("), 1,
+                         "exactly one removeAll, inside the single-flight guard")
+        self.assertGreaterEqual(source.count("void chrome.runtime.lastError"), 2,
+                                "every menu call must swallow lastError")
+
     def test_incognito_is_never_captured(self):
         source = read("background.js")
         self.assertIn("incognito", source)
