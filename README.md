@@ -25,8 +25,13 @@ and to stay honest when it does not know something.
 ## Quickstart
 
 ```bash
-./run.sh                 # creates .venv on first run, then starts the backend
+./run.sh                 # Linux/macOS: creates .venv on first run, then starts
+run.bat                  # Windows: double-click it (same thing, .venv included)
 ```
+
+Both launchers create `.venv` + install requirements on first run (internet needed
+once), then start the backend and **keep the window open** — if anything goes wrong
+the window now stays up with a readable error instead of flashing shut.
 
 The startup banner prints the dashboard URL and the API token:
 
@@ -199,6 +204,16 @@ GET  /api/jobs             POST /api/jobs/run/<name>
 Runtime knobs (capture switch, dwell, budgets, per-site modes…) live in the `settings`
 table and are edited from the extension or the dashboard; the extension mirrors them
 locally so privacy keeps working while the backend is offline.
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `run.bat` window closes / "no usable Python interpreter" | Install Python 3.9+ from python.org with **"Add python.exe to PATH"** ticked, retry. |
+| "Flask could not be installed into .venv" | Internet is needed once for pip; delete the `.venv` folder and run again. |
+| "Address already in use / Port 8765 is in use" | Another Twin-Brain is running — close it, or `set TWINBRAIN_PORT=8766` (Windows) / `TWINBRAIN_PORT=8766 ./run.sh` and reload the extension's Connection settings. |
+| Extension badge stays grey / "backend offline" | Start the backend first; then popup → gear → Connection → **auto-fill** (or paste `data/token.txt`). |
+| Dashboard asks for a token | Paste it once from the terminal banner / `data/token.txt`; it is remembered in the browser. |
 
 ## Development
 
