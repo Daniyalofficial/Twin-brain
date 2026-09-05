@@ -328,13 +328,12 @@
     if (reset) state.memOffset = 0;
     const tbody = $('#mem-table tbody');
     if (reset) tbody.textContent = '';
-    const params = new URLSearchParams({ limit: '50', offset: String(state.memOffset) });
+    const params = new URLSearchParams({ limit: '50', offset: String(state.memOffset),
+                                         include_hidden: '1' });
     if (state.memQuery) params.set('q', state.memQuery);
+    if (state.memMode) params.set('mode', state.memMode);
     const data = await api(`/api/pages?${params}`);
-    let pages = data.pages || [];
-    if (state.memMode) {
-      pages = pages.filter((p) => (p.mode || 'full') === state.memMode);
-    }
+    const pages = data.pages || [];
     pages.forEach((page) => {
       const tr = el('tr');
       const titleCell = el('td', 'title-cell');
@@ -342,6 +341,7 @@
       link.href = page.url; link.target = '_blank'; link.rel = 'noreferrer';
       titleCell.appendChild(link);
       titleCell.appendChild(el('div', 'sub',
+        (page.mode === 'no_ai' ? 'hidden from AI · ' : '') +
         (page.assistant_fetched ? 'assistant-fetched · ' : '') +
         `${(page.word_count || 0).toLocaleString()} words` +
         (page.summary ? ` · ${page.summary.slice(0, 70)}…` : '')));

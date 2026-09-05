@@ -78,6 +78,29 @@ class CapturePrivacyTests(TwinBrainTestCase):
         self.assertFalse(response.get_json().get("stored"))
         db.set_setting("capture_enabled", True)
 
+    def test_pages_endpoint_pagination_and_hidden_badge(self):
+        for i in range(5):
+            seed_page(self.client, f"https://pager.example/p{i}", f"Pager {i}",
+                      f"paging test content number {i} with enough words to index. " * 8)
+        capture.set_domain_mode("vault.example", "no_ai")
+        seed_page(self.client, "https://vault.example/h", "Vault",
+                  "hidden but still stored for the user's own browsing " * 10)
+
+        first = self.api("get", "/api/pages?limit=3&include_hidden=1").get_json()
+        second = self.api("get", "/api/pages?limit=3&offset=3&include_hidden=1").get_json()
+        self.assertEqual(len(first["pages"]), 3)
+        ids1 = {p["page_id"] for p in first["pages"]}
+        ids2 = {p["page_id"] for p in second["pages"]}
+        self.assertFalse(ids1 & ids2, "offset must not repeat rows")
+        self.assertEqual(len(ids1 | ids2), 6)
+
+        default = self.api("get", "/api/pages?limit=50").get_json()
+        self.assertTrue(all(p.get("mode") == "full" for p in default["pages"]),
+                        "assistant-facing listing must never include hidden pages")
+        hidden = self.api("get", "/api/pages?mode=no_ai").get_json()
+        self.assertEqual([p["domain"] for p in hidden["pages"]], ["vault.example"])
+        self.assertEqual(hidden["pages"][0]["mode"], "no_ai")
+
     def test_heartbeat_mirrors_extension_domain_modes(self):
         seed_page(self.client, "https://mirror.example/x", "Mirror",
                   "A page whose domain the extension will mark hidden. " * 10)

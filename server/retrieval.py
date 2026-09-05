@@ -555,8 +555,15 @@ def search_links(query: str, *, limit: int = 25, since: float | None = None,
 
 
 def timeline(limit: int = 50, since: float | None = None,
-             domain: str | None = None) -> list[dict[str, Any]]:
-    clauses = ["ai_visible = 1"]
+             domain: str | None = None, offset: int = 0,
+             include_hidden: bool = False) -> list[dict[str, Any]]:
+    """Newest-first list of stored pages.
+
+    `include_hidden=False` (the default) keeps pages the user hid from the AI out
+    of every assistant-facing view; the dashboard's memory browser passes True so
+    the user can always see exactly what is stored, badged with its mode.
+    """
+    clauses: list[str] = [] if include_hidden else ["ai_visible = 1"]
     params: list[Any] = []
     if since:
         clauses.append("COALESCE(last_visited_at, visited_at) >= ?")
@@ -564,12 +571,13 @@ def timeline(limit: int = 50, since: float | None = None,
     if domain:
         clauses.append("(domain = ? OR registrable_domain = ?)")
         params.extend([domain, registrable_domain(domain)])
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     rows = db.query(
         f"""SELECT id, url, title, domain, COALESCE(last_visited_at, visited_at) AS visited_at,
                    dwell_seconds, total_dwell_seconds, visit_count, max_scroll_depth,
-                   excerpt, word_count, source
-            FROM pages WHERE {' AND '.join(clauses)}
-            ORDER BY visited_at DESC LIMIT ?""", (*params, limit))
+                   excerpt, word_count, source, ai_visible
+            FROM pages {where}
+            ORDER BY visited_at DESC LIMIT ? OFFSET ?""", (*params, limit, max(0, offset)))
     return [{
         "page_id": r["id"], "url": r["url"], "title": r["title"] or r["url"],
         "domain": r["domain"] or "", "domain_label": pretty_domain(r["domain"] or ""),
@@ -581,6 +589,8 @@ def timeline(limit: int = 50, since: float | None = None,
         "excerpt": r["excerpt"] or "", "word_count": r["word_count"] or 0,
         "source": r["source"] or "extension",
         "assistant_fetched": (r["source"] or "") == "web_enrichment",
+        "ai_visible": bool(r["ai_visible"]),
+        "mode": "full" if r["ai_visible"] else "no_ai",
     } for r in rows]
 
 

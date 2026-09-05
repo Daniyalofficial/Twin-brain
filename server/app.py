@@ -331,9 +331,14 @@ def create_app(*, with_scheduler: bool | None = None) -> Flask:
     @app.get("/api/pages")
     def api_pages():
         limit = min(int(_int_arg("limit", 50) or 50), 500)
+        offset = max(0, int(_int_arg("offset", 0) or 0))
         since = request.args.get("since")
         domain = request.args.get("domain")
         query = (request.args.get("q") or "").strip()
+        mode = (request.args.get("mode") or "").strip()
+        # the memory browser sees everything (badged); assistant views never do
+        include_hidden = mode in ("no_ai", "all") or \
+            request.args.get("include_hidden") in ("1", "true", "yes")
         since_epoch = None
         if since:
             try:
@@ -343,9 +348,16 @@ def create_app(*, with_scheduler: bool | None = None) -> Flask:
         if query:
             items = retrieval.search_links(query, limit=limit, since=since_epoch,
                                            domain=domain)
+            if mode in ("full", "no_ai"):
+                items = [item for item in items
+                         if (item.get("mode") or "full") == mode]
         else:
-            items = retrieval.timeline(limit=limit, since=since_epoch, domain=domain)
-        return jsonify({"ok": True, "count": len(items), "pages": items})
+            items = retrieval.timeline(limit=limit, since=since_epoch, domain=domain,
+                                       offset=offset, include_hidden=include_hidden)
+            if mode in ("full", "no_ai"):
+                items = [item for item in items if item.get("mode") == mode]
+        return jsonify({"ok": True, "count": len(items), "offset": offset,
+                        "include_hidden": include_hidden, "pages": items})
 
     @app.get("/api/pages/<page_id>")
     def api_page(page_id: str):
