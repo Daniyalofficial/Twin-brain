@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Twin-Brain — your second brain</title>
+<link rel="icon" type="image/png" href="/ui/icon-48.png">
+<link rel="stylesheet" href="/ui/app.css">
+</head>
+<body>
+
+<!-- ============================ connect gate ============================ -->
+<div id="connect" class="card connect-card hidden">
+  <h2>Connect to your Twin-Brain</h2>
+  <p class="note">This dashboard runs on your own machine, next to your memory. Paste the
+  access token once and it will be remembered in this browser.</p>
+  <div class="row">
+    <input type="password" id="connect-token" placeholder="token (from data/token.txt)" autocomplete="off" spellcheck="false">
+    <button class="primary" id="connect-btn">Connect</button>
+  </div>
+  <p class="note" style="margin-top:12px">The token is printed in the terminal when the server
+  starts, and saved in <code>data/token.txt</code>.</p>
+  <p id="connect-error" class="note" style="color:var(--danger)"></p>
+</div>
+
+<div id="app" class="layout hidden">
+  <aside>
+    <div class="logo">
+      <img src="/ui/icon-48.png" width="30" height="30" alt="">
+      <div><b>Twin-Brain</b><small id="version-tag">your second brain</small></div>
+    </div>
+    <button class="nav-btn active" data-view="ask"><span class="ico">💬</span> Ask</button>
+    <button class="nav-btn" data-view="memory"><span class="ico">📚</span> Memory</button>
+    <button class="nav-btn" data-view="sites"><span class="ico"></span> Sites &amp; privacy</button>
+    <button class="nav-btn" data-view="interests"><span class="ico">🧠</span> Interests</button>
+    <button class="nav-btn" data-view="digest"><span class="ico">📬</span> Digest &amp; insights</button>
+    <button class="nav-btn" data-view="growth"><span class="ico">🌱</span> Growth &amp; audit</button>
+    <button class="nav-btn" data-view="settings"><span class="ico">⚙️</span> Settings</button>
+    <div class="side-foot">
+      <span class="pill" id="side-engine">engine: …</span>
+      <span class="pill" id="side-budgets">budgets: …</span>
+      <span class="pill" id="side-scheduler">scheduler: …</span>
+    </div>
+  </aside>
+
+  <main>
+    <div class="page-head">
+      <div>
+        <h1 id="view-title">Ask your memory</h1>
+        <div class="sub" id="view-sub">Answers come only from pages you actually read.</div>
+      </div>
+      <div class="head-right">
+        <span class="pill pill-ok" id="head-status">online</span>
+        <span class="pill" id="head-memory">–</span>
+        <button class="ghost" id="head-refresh" title="Refresh">⟳</button>
+      </div>
+    </div>
+
+    <!-- ================================ ASK ================================ -->
+    <section class="view active" id="view-ask">
+      <div class="chat" id="chat"></div>
+      <div class="composer">
+        <textarea id="ask-input" rows="1" placeholder="What did I read about…? (Enter to send, Shift+Enter for a newline)"></textarea>
+        <button class="primary" id="ask-btn">Ask</button>
+      </div>
+      <div class="chips" id="ask-chips"></div>
+      <div class="stream-line" id="stream-line"></div>
+    </section>
+
+    <!-- ============================== MEMORY ============================== -->
+    <section class="view" id="view-memory">
+      <div class="toolbar">
+        <input type="search" id="mem-search" placeholder="search your memory (full text)…">
+        <select id="mem-mode">
+          <option value="">all modes</option>
+          <option value="full">remembered</option>
+          <option value="no_ai">hidden from AI</option>
+        </select>
+        <button class="ghost" id="mem-more">load more</button>
+      </div>
+      <div class="card" style="padding:6px 10px">
+        <table class="list" id="mem-table">
+          <thead><tr>
+            <th style="width:46%">Page</th><th>Site</th><th>When</th>
+            <th style="text-align:right">Read</th><th style="text-align:right">Visits</th><th></th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+        <div class="empty hidden" id="mem-empty">Nothing stored yet. Install the extension and read something.</div>
+      </div>
+    </section>
+
+    <!-- ============================== SITES =============================== -->
+    <section class="view" id="view-sites">
+      <div class="card">
+        <h2>Per-site privacy <small>the same controls as in the extension</small></h2>
+        <p class="note"><b>Remember</b> — captured and usable by the AI.
+        <b>Hide from AI</b> — the link is kept, the content never reaches the assistant.
+        <b>Block</b> — nothing is recorded, stored pages are deleted.</p>
+        <div class="toolbar">
+          <input type="search" id="site-search" placeholder="filter sites…">
+          <input type="text" id="site-add" placeholder="add example.com" style="width:180px">
+          <select id="site-add-mode">
+            <option value="off">Block</option>
+            <option value="no_ai">Hide from AI</option>
+            <option value="full">Remember</option>
+          </select>
+          <button class="ghost" id="site-add-btn">add</button>
+        </div>
+        <table class="list" id="site-table">
+          <thead><tr><th>Site</th><th style="text-align:right">Pages</th><th style="text-align:right">Visits</th><th style="text-align:right">Time</th><th style="width:150px">Mode</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============================ INTERESTS ============================= -->
+    <section class="view" id="view-interests">
+      <div class="card">
+        <h2>What you seem to care about <small>derived statistics, never guessed</small></h2>
+        <p class="note">Each interest lists the evidence behind it — pages, sites and time spent —
+        so you can see exactly why it is there.</p>
+        <div class="toolbar"><button class="ghost" id="interests-recompute">recompute now</button></div>
+      </div>
+      <div class="grid cols-3" id="interest-grid"></div>
+      <div class="card" style="margin-top:16px">
+        <h2>Persona <small>how the assistant describes you, with hedges</small></h2>
+        <div class="digest-body" id="persona"></div>
+      </div>
+    </section>
+
+    <!-- ============================== DIGEST ============================== -->
+    <section class="view" id="view-digest">
+      <div class="card">
+        <h2>Today's recap</h2>
+        <div class="toolbar">
+          <input type="date" id="digest-day">
+          <button class="ghost" id="digest-build">build / refresh</button>
+        </div>
+        <div class="digest-body" id="digest-body"></div>
+      </div>
+      <div class="card">
+        <h2>Insights <small>what the background sweep found for you</small></h2>
+        <div id="insight-list"></div>
+      </div>
+    </section>
+
+    <!-- ============================== GROWTH ============================== -->
+    <section class="view" id="view-growth">
+      <div class="grid cols-4" id="growth-stats"></div>
+      <div class="card" style="margin-top:16px">
+        <h2>Growth candidates <small>topics you read about that could be refreshed</small></h2>
+        <div class="toolbar"><button class="primary" id="enrich-run">run one enrichment search now</button>
+          <button class="ghost" id="enrich-daily">run daily sweep</button></div>
+        <table class="list" id="candidate-table">
+          <thead><tr><th>Topic</th><th>Why</th><th style="text-align:right">Score</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h2>Outbound search audit <small>every query this backend ever sent to the internet</small></h2>
+        <table class="list" id="audit-table">
+          <thead><tr><th>When</th><th>Kind</th><th>Query</th><th>Provider</th><th>Status</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h2>Background jobs</h2>
+        <table class="list" id="job-table">
+          <thead><tr><th>Job</th><th>Last run</th><th>Status</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============================= SETTINGS ============================= -->
+    <section class="view" id="view-settings">
+      <div class="grid cols-2">
+        <div class="card">
+          <h2>Memory &amp; capture</h2>
+          <div id="set-capture"></div>
+        </div>
+        <div class="card">
+          <h2>Knowledge growth</h2>
+          <div id="set-growth"></div>
+        </div>
+      </div>
+      <div class="grid cols-2">
+        <div class="card">
+          <h2>Answers</h2>
+          <div id="set-answers"></div>
+        </div>
+        <div class="card">
+          <h2>Engine</h2>
+          <div id="engine-info"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Your data</h2>
+        <div class="toolbar">
+          <a class="ghost" id="export-link" href="#" download>⬇ export everything (JSON)</a>
+          <button class="ghost" id="reindex-btn">rebuild search index</button>
+          <button class="danger" id="wipe-btn">delete everything…</button>
+        </div>
+        <div id="wipe-box" class="hidden">
+          <p class="note">Type <code>DELETE ALL</code> to confirm. This cannot be undone.</p>
+          <div class="toolbar">
+            <input type="text" id="wipe-confirm" placeholder="DELETE ALL" style="width:160px">
+            <button class="danger" id="wipe-go">permanently delete</button>
+            <button class="ghost" id="wipe-cancel">cancel</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="modal-bg" class="modal-bg hidden">
+  <div class="modal">
+    <header><h3 id="modal-title">Page</h3><button class="ghost" id="modal-close">close ✕</button></header>
+    <div class="content" id="modal-body"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script src="/ui/app.js"></script>
+</body>
+</html>

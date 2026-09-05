@@ -1,1 +1,209 @@
-# Twin-brain
+# Twin-Brain — a private, local-first second brain
+
+Twin-Brain is a browser extension plus a small local backend that remembers what you
+read and answers questions **only from what it actually stored**. It is the "digital
+twin" from the original spec, built to run with zero configuration and zero API keys,
+and to stay honest when it does not know something.
+
+- **Everything stays on your machine.** One SQLite file, one local HTTP server on
+  `127.0.0.1:8765`, one token in `data/token.txt`.
+- **No API keys needed.** The default answer engine is a grounded extractive engine:
+  it quotes sentences from your own pages and nothing else, so it cannot invent a
+  memory. Better engines (Claude, OpenAI-compatible, local Ollama) plug in and
+  activate automatically when a key is present.
+- **Privacy filters run before capture, not after.** Excluded content never touches
+  disk, not even briefly. Incognito is never captured, full stop.
+- **Never forget, unless you say so.** Every link you open is logged (including repeat
+  visits). "Forget this page" deletes it *and* tombstones the URL so it is never
+  re-captured.
+- **Optional growth.** The backend may search the web about topics *you* already read
+  about, capped by daily budgets (default 5 enrichment runs and 5 notifications a day),
+  with a full audit log of every outbound query.
+
+---
+
+## Quickstart
+
+```bash
+./run.sh                 # creates .venv on first run, then starts the backend
+```
+
+The startup banner prints the dashboard URL and the API token:
+
+```
+Twin-Brain backend ready
+  dashboard : http://127.0.0.1:8765/
+  api token : xxxxxxxx
+  database  : .../data/twinbrain.db
+```
+
+1. **Open the dashboard** at <http://127.0.0.1:8765/> — it pairs itself automatically
+   (same-origin), or paste the token once.
+2. **Load the extension**: `chrome://extensions` → enable *Developer mode* →
+   *Load unpacked* → choose the `extension/` folder. Click its icon → gear →
+   *Connection* → **auto-fill** to pair it with the backend (or open
+   <http://127.0.0.1:8765/pair>).
+3. **Browse normally.** After ~5 s on a page the extension captures it; the toolbar
+   badge shows how many pages were remembered today.
+4. **Ask**: toolbar popup, dashboard, or right-click → *Ask Twin-Brain*.
+
+Want demo data without browsing? `./.venv/bin/python scripts/seed_demo.py --wipe`
+seeds 18 realistic pages across four topic clusters into a scratch database
+(set `TWINBRAIN_DATA_DIR` first if you want it somewhere specific).
+
+---
+
+## The privacy model
+
+The single source of truth for "may we capture this?" is `server/capture.py:check_url`,
+and the extension runs the same rules **in the service worker before any content script
+is injected** — so a blocked page is never even read, let alone stored.
+
+| Per-site mode | What happens |
+|---|---|
+| **Remember** (`full`) | Content is captured and the AI may use it to answer. |
+| **Hide from AI** (`no_ai`) | The link, title and visit stats are kept so *you* can find it; the content is never indexed and never reaches retrieval. |
+| **Block** (`off`) | Nothing is recorded at all. Anything already stored for that site is deleted. |
+
+On top of that:
+
+- A shipped **default blocklist** (67 domains: banking, payments, crypto, health,
+  government portals, password managers, webmail, messaging, adult) is pre-applied and
+  mirrored in the extension so it works offline. You can change any entry.
+- **Sensitive URL patterns** (`/login`, `/checkout`, `token=`, `/account/password`, …)
+  are refused regardless of domain.
+- **Incognito windows are never captured** — there is no setting that changes this.
+- A global **pause** (toolbar icon, `Alt+Shift+P`, or settings) stops everything and is
+  visible in the badge.
+- **Forget** is durable: forgotten URLs and domains get tombstones, so a later visit
+  cannot resurrect them.
+- **Export everything** (JSON) and **delete everything** (typed confirmation) are both
+  one click, in the popup, the options page and the dashboard.
+
+### The honesty contract
+
+- Answers are built only from retrieved pages. The extractive engine quotes verbatim
+  sentences and lists `[n]` citations with **title, site and visit date** — falsifiable
+  by clicking through.
+- When retrieval finds nothing, the answer is a plain "I don't have anything in your
+  history matching that", never an invention. Grounding requires real evidence
+  (lexical overlap or vector similarity well above the embedder's noise floor), which
+  is what stops a hash-based embedder from "recognising" unrelated pages.
+- Pages the backend fetched itself during enrichment are labelled *assistant-fetched*
+  and are never described as something you read.
+- Interests and the persona are **derived statistics with evidence** (page counts,
+  dwell time, links to the pages behind each topic), not scores invented by a model.
+
+### Background activity, capped
+
+| Knob (settings) | Default | Meaning |
+|---|---|---|
+| `notification_daily_budget` | 5 | Hard cap on notifications per day. |
+| `enrichment_daily_budget` | 5 | Hard cap on enrichment searches per day. |
+| `web_search_daily_budget` | 40 | Hard cap on all outbound searches per day. |
+| `digest_hour` | 20 | Local hour for the daily recap. |
+
+Every query the backend ever sends to the internet is logged and shown in
+**Dashboard → Growth & audit**.
+
+---
+
+## Architecture
+
+```
+extension/                     MV3, no build step, no dependencies
+  manifest.json                commands, shortcuts, permissions (no history/debugger)
+  background.js                service worker: gate → inject → capture → queue → badge
+  lib/defaults.js              offline copy of the privacy defaults (kept in sync by tests)
+  lib/settings.js              exclusion engine: scheme → local → pause → domain modes → markers
+  lib/store.js                 IndexedDB outbox + local page cache (survives backend downtime)
+  lib/api.js                   backend client with token, timeouts and offline queueing
+  content/extractor.js         dependency-free Readability-style extractor (classic script)
+  content/observer.js          dwell/scroll tracking, SPA navigation detection
+  popup/  options/             chat UI and the full privacy console
+  icons/                       generated by scripts/make_icons.py (pure stdlib PNG writer)
+
+server/                        Flask app, stdlib + numpy + sqlite-vec only
+  app.py                       routes, dashboard hosting, engine introspection
+  security.py                  token auth, CSRF header, CORS for extensions, pairing
+  db.py                        schema v5, WAL, thread-local conns, sqlite-vec wiring
+  capture.py                   check_url / ingest / modes / forget / export / import / wipe
+  text.py                      cleaning (incl. hard-wrap rejoining), chunking, sentences,
+                               query hygiene, time windows
+  html_extract.py              dependency-free HTML → readable text (for fetched pages)
+  embeddings/                  hash-v1 (default) | sentence-transformers | OpenAI-compatible
+  vector_store.py              sqlite-vec KNN with exact-scan fallback
+  lexical.py                   FTS5 (title+text) + Python BM25 rescore, porter tolerance
+  retrieval.py                 hybrid fusion, calibration, evidence gate, page re-rank
+  llm/                         extractive (default) | anthropic | openai-compatible
+  assistant.py                 intent → retrieval → optional web → answer, SSE streaming
+  web_search.py                duckduckgo | brave | tavily | serper, budgeted + cached
+  interests.py  digest.py  enrichment.py  jobs.py  scheduler.py
+  static/                      the dashboard (index.html, pair.html, app.css, app.js)
+
+tests/                         55 stdlib-unittest tests (privacy, retrieval, grounding,
+                               budgets, security, text units, extension/server sync)
+scripts/                       seed_demo.py, make_icons.py
+```
+
+### Retrieval in one paragraph
+
+Queries are matched two ways at once: FTS5 full-text (title boosted, BM25 rescored in
+Python with Lucene-style IDF and porter-stem tolerance) and vector similarity
+(sqlite-vec cosine, or an exact scan when the extension is unavailable). The two are
+fused with per-embedder weights — the hash embedder leans lexical, real embedding
+models lean vector — then pages are re-ranked `0.7·relevance + 0.3·recency`. Vector
+scores are calibrated against each embedder's `reference_similarity`, and a match only
+counts as *grounded* with real evidence: lexical coverage, or raw cosine ≥ 2.2× the
+embedder's noise floor. A lexical-blind embedder with zero lexical coverage is capped
+hard, which is what keeps char-n-gram collisions ("mode" vs "model") from producing
+confident nonsense.
+
+### Upgrades (all optional, auto-detected)
+
+| Want | Do |
+|---|---|
+| Real semantic embeddings | `pip install sentence-transformers` (or set `OPENAI_API_KEY`) |
+| Fluenter answers | set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` / `OPENAI_BASE_URL` (works with Ollama/vLLM) |
+| Live web search | default DuckDuckGo needs nothing; `BRAVE_API_KEY`, `TAVILY_API_KEY`, `SERPER_API_KEY` for better results |
+
+Everything degrades gracefully: with nothing installed you still get capture, hybrid
+retrieval, grounded answers, digests and budgets — fully offline.
+
+---
+
+## API sketch
+
+All routes are token-authenticated (`Authorization: Bearer …`, `?token=…`, or the
+pairing cookie); browser writes must also send `X-Requested-With: TwinBrain`.
+
+```
+GET  /api/health  /api/engine  /api/stats  /api/suggestions  /api/token
+POST /api/capture  /api/capture/visit  /api/heartbeat
+GET  /api/query?q=…            POST /api/query {query, style, use_web, top_k}
+GET  /api/query/stream?q=…     (SSE: intent → sources → grounding → web → answer → citations)
+GET  /api/pages  /api/pages/<id>  /api/pages/<id>/text  /api/page-by-url
+POST /api/forget   GET/POST /api/domains  POST /api/domains/mode
+GET  /api/interests  /api/digest  /api/insights  /api/notifications
+POST /api/enrichment/run   GET /api/enrichment   (the outbound audit log)
+GET/POST /api/settings     POST /api/llm/provider
+GET/POST /api/export       POST /api/import      POST /api/wipe
+GET  /api/jobs             POST /api/jobs/run/<name>
+```
+
+## Configuration
+
+`.env` in the repo root (see `.env.example`) or environment variables:
+`TWINBRAIN_HOST`, `TWINBRAIN_PORT`, `TWINBRAIN_DATA_DIR`, `TWINBRAIN_EMBEDDER`,
+`TWINBRAIN_LLM`, `TWINBRAIN_WEBSEARCH`, budgets, retrieval weights, retention.
+Runtime knobs (capture switch, dwell, budgets, per-site modes…) live in the `settings`
+table and are edited from the extension or the dashboard; the extension mirrors them
+locally so privacy keeps working while the backend is offline.
+
+## Development
+
+```bash
+./.venv/bin/python -m unittest discover -s tests -v   # 55 tests, no network needed
+./.venv/bin/python scripts/make_icons.py              # regenerate extension icons
+./.venv/bin/python scripts/seed_demo.py --wipe        # demo memory
+```

@@ -1,0 +1,24 @@
+# ---------------------------------------------------------------------------
+# Twin-Brain backend
+#
+# Only Flask is strictly required. Everything else is OPTIONAL and upgrades the
+# system when present — the app auto-detects and degrades gracefully:
+#
+#   * no sqlite-vec          -> numpy / pure-python cosine scan (same results)
+#   * no numpy               -> pure-python scan (slower, still fine <50k pages)
+#   * no sentence-transformers -> built-in offline hashing embedder + BM25 hybrid
+#   * no LLM API key         -> grounded extractive answer engine (never invents)
+# ---------------------------------------------------------------------------
+
+flask>=3.0
+
+# --- recommended (vector index + fast similarity math) ---
+sqlite-vec>=0.1.6
+numpy>=1.26
+
+# --- optional: real neural embeddings, fully local & private (first run
+#     downloads all-MiniLM-L6-v2 ~90MB; requires internet ONCE) ---
+# sentence-transformers>=2.7
+
+# --- optional: nicer CLI output for scripts ---
+# rich>=13.0

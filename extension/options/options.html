@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Twin-Brain — Settings</title>
+<link rel="stylesheet" href="options.css">
+</head>
+<body>
+<div class="shell">
+  <header class="page-head">
+    <div>
+      <h1><img src="../icons/icon-48.png" alt="" width="26" height="26"> Twin-Brain settings</h1>
+      <p class="lede">Everything your second brain remembers — and everything it is not allowed to.</p>
+    </div>
+    <div class="head-status">
+      <span id="backend-pill" class="pill pill-unknown">checking backend…</span>
+      <span id="memory-pill" class="pill">–</span>
+      <button id="btn-dashboard" class="ghost">Open dashboard ↗</button>
+    </div>
+  </header>
+
+  <div id="welcome" class="welcome hidden">
+    <strong>Welcome.</strong> Twin-Brain is installed. Three things to do:
+    <ol>
+      <li>Start the local backend (<code>./run.sh</code> in the project folder) — the pill above turns green.</li>
+      <li>Decide what it may read below. Banking, health, government and webmail sites are already blocked.</li>
+      <li>Browse normally. Pages are remembered after <span id="welcome-dwell">5</span> seconds on the page.</li>
+    </ol>
+  </div>
+
+  <nav class="section-nav">
+    <a href="#capture">Capture</a>
+    <a href="#sites">Sites &amp; privacy</a>
+    <a href="#knowledge">Knowledge growth</a>
+    <a href="#answers">Answers</a>
+    <a href="#data">Your data</a>
+    <a href="#connection">Connection</a>
+  </nav>
+
+  <!-- ================= CAPTURE ================= -->
+  <section id="capture" class="card">
+    <h2>Capture</h2>
+    <p class="note">The exclusion check runs <em>before</em> any script touches a page, so blocked
+    content is never written down — not even briefly.</p>
+
+    <label class="switch-row">
+      <span><strong>Remember what I read</strong><small>Master switch for the whole extension.</small></span>
+      <input type="checkbox" id="set-captureEnabled">
+    </label>
+
+    <label class="switch-row">
+      <span><strong>Read page content</strong><small>Off = save the link and title only, never the text.</small></span>
+      <input type="checkbox" id="set-captureContent">
+    </label>
+
+    <label class="switch-row">
+      <span><strong>Pause everything right now</strong><small>Also available from the toolbar icon and Alt+Shift+P.</small></span>
+      <input type="checkbox" id="set-globalPause">
+    </label>
+
+    <label class="switch-row">
+      <span><strong>Skip sensitive URLs</strong><small>Any page whose address contains <code>/login</code>, <code>/checkout</code>, <code>token=</code>, <code>/account/password</code> and similar.</small></span>
+      <input type="checkbox" id="set-skipSensitiveUrls">
+    </label>
+
+    <label class="switch-row">
+      <span><strong>Never capture private/incognito windows</strong><small>Always on. There is no setting that changes this.</small></span>
+      <input type="checkbox" checked disabled>
+    </label>
+
+    <div class="field-grid">
+      <label class="field">
+        <span>Minimum time on page before remembering</span>
+        <div class="inline">
+          <input type="number" id="set-minDwellSeconds" min="1" max="600" step="1">
+          <span class="unit">seconds</span>
+        </div>
+        <small>Skips accidental clicks. The spec suggests 5.</small>
+      </label>
+      <label class="field">
+        <span>Keep memories for</span>
+        <div class="inline">
+          <input type="number" id="set-retentionDays" min="0" max="3650" step="30">
+          <span class="unit">days (0 = forever)</span>
+        </div>
+        <small>0 means never forget. Anything else is deleted automatically each day.</small>
+      </label>
+    </div>
+
+    <div class="stat-strip" id="capture-stats"></div>
+  </section>
+
+  <!-- ================= SITES ================= -->
+  <section id="sites" class="card">
+    <h2>Sites — what the AI is allowed to read</h2>
+    <p class="note">Every site you have visited is listed here. Pick a mode per site:</p>
+    <ul class="modes-legend">
+      <li><span class="mode mode-full">Remember</span> captured, and the AI may use it to answer.</li>
+      <li><span class="mode mode-no_ai">Hide from AI</span> the link is saved so you can find it, but the content is never shown to the AI.</li>
+      <li><span class="mode mode-off">Block</span> nothing is recorded at all — and anything already stored for that site is deleted.</li>
+    </ul>
+
+    <div class="toolbar">
+      <input type="search" id="site-search" placeholder="filter sites (e.g. github, bank, news)…">
+      <select id="site-mode-filter">
+        <option value="">all modes</option>
+        <option value="full">remembered</option>
+        <option value="no_ai">hidden from AI</option>
+        <option value="off">blocked</option>
+      </select>
+      <button id="btn-add-domain" class="ghost">+ block a site</button>
+      <button id="btn-restore-defaults" class="ghost">restore default blocklist</button>
+    </div>
+
+    <div id="add-domain" class="add-domain hidden">
+      <input type="text" id="new-domain" placeholder="example.com">
+      <select id="new-mode">
+        <option value="off">Block (never capture)</option>
+        <option value="no_ai">Hide from AI</option>
+        <option value="full">Remember</option>
+      </select>
+      <button id="btn-add-confirm" class="primary">Add</button>
+      <button id="btn-add-cancel" class="ghost">Cancel</button>
+    </div>
+
+    <div class="site-summary" id="site-summary"></div>
+    <div id="site-table" class="site-table"></div>
+    <div id="site-more" class="center hidden"><button id="btn-site-more" class="ghost">show more</button></div>
+  </section>
+
+  <!-- ================= KNOWLEDGE GROWTH ================= -->
+  <section id="knowledge" class="card">
+    <h2>Knowledge growth (backend web search)</h2>
+    <p class="note">Optional. When on, the backend may search the web about topics <em>you</em>
+    already read about, and notify you when something genuinely new turns up. Every outbound
+    query is logged and shown in the dashboard so you can audit it.</p>
+
+    <label class="switch-row">
+      <span><strong>Allow backend web searches</strong><small>Off = your twin only ever knows what you read.</small></span>
+      <input type="checkbox" id="set-webSearchEnabled">
+    </label>
+    <label class="switch-row">
+      <span><strong>Use the web to answer when memory is thin</strong><small>Web results are always labelled as such, never presented as your memory.</small></span>
+      <input type="checkbox" id="set-useWebForAnswers">
+    </label>
+    <label class="switch-row">
+      <span><strong>Daily enrichment sweep</strong><small>Checks your top topics for updates once a day.</small></span>
+      <input type="checkbox" id="set-enrichmentEnabled">
+    </label>
+    <label class="switch-row">
+      <span><strong>Notifications</strong><small>New-info alerts and the daily recap.</small></span>
+      <input type="checkbox" id="set-notificationsEnabled">
+    </label>
+
+    <div class="field-grid">
+      <label class="field">
+        <span>Notifications per day (max)</span>
+        <input type="number" id="set-notificationDailyBudget" min="0" max="50" step="1">
+        <small>Hard cap. Default 5 — never more than five pings a day.</small>
+      </label>
+      <label class="field">
+        <span>Enrichment searches per day (max)</span>
+        <input type="number" id="set-enrichmentDailyBudget" min="0" max="50" step="1">
+        <small>Each run is one search about something you already read.</small>
+      </label>
+      <label class="field">
+        <span>Total web searches per day (max)</span>
+        <input type="number" id="set-webSearchDailyBudget" min="0" max="500" step="10">
+        <small>Includes searches triggered by your own questions.</small>
+      </label>
+      <label class="field">
+        <span>Daily recap at</span>
+        <div class="inline">
+          <input type="number" id="set-digestHour" min="0" max="23" step="1">
+          <span class="unit">hour (0–23)</span>
+        </div>
+        <small>Your local time.</small>
+      </label>
+    </div>
+
+    <div class="toolbar">
+      <button id="btn-run-enrichment" class="ghost">Run one enrichment search now</button>
+      <button id="btn-run-digest" class="ghost">Build today's recap now</button>
+      <button id="btn-audit" class="ghost">Show outbound search log</button>
+    </div>
+    <div id="budgets" class="stat-strip"></div>
+    <div id="audit" class="audit hidden"></div>
+  </section>
+
+  <!-- ================= ANSWERS ================= -->
+  <section id="answers" class="card">
+    <h2>Answers</h2>
+    <label class="switch-row">
+      <span><strong>Answer style</strong><small>Concise points at the source pages; detailed quotes more of them.</small></span>
+      <select id="set-answerStyle">
+        <option value="concise">concise</option>
+        <option value="detailed">detailed</option>
+        <option value="bullet">bullet list</option>
+      </select>
+    </label>
+    <div class="field-grid">
+      <label class="field">
+        <span>Memory slices per answer</span>
+        <input type="number" id="set-topK" min="1" max="20" step="1">
+        <small>How many retrieved pages the AI is allowed to see. 5–8 is the sweet spot.</small>
+      </label>
+      <label class="field">
+        <span>Answer engine</span>
+        <select id="set-provider">
+          <option value="auto">auto (best available)</option>
+          <option value="extractive">offline grounded engine (no API key)</option>
+          <option value="anthropic">Claude (needs ANTHROPIC_API_KEY)</option>
+          <option value="openai">OpenAI-compatible / local (needs key or local server)</option>
+        </select>
+        <small id="provider-note">The offline engine quotes only what you read and can never invent a memory.</small>
+      </label>
+    </div>
+    <div class="engine" id="engine"></div>
+  </section>
+
+  <!-- ================= DATA ================= -->
+  <section id="data" class="card">
+    <h2>Your data</h2>
+    <p class="note">Export everything, or delete everything. Both are one click, because a memory
+    tool you cannot empty is not a tool you can trust.</p>
+    <div class="toolbar">
+      <button id="btn-export" class="primary">Export all memory as JSON</button>
+      <label class="ghost file-btn">Import a JSON export
+        <input type="file" id="import-file" accept="application/json,.json" hidden>
+      </label>
+      <button id="btn-reindex" class="ghost">Rebuild search index</button>
+      <button id="btn-wipe" class="danger">Delete everything…</button>
+    </div>
+    <div id="wipe-box" class="wipe-box hidden">
+      <p>This deletes every page, visit, chunk, vector, conversation, insight and interest.
+      It cannot be undone. Type <code>DELETE ALL</code> to confirm:</p>
+      <div class="inline">
+        <input type="text" id="wipe-confirm" placeholder="DELETE ALL" autocomplete="off">
+        <button id="btn-wipe-confirm" class="danger">Permanently delete</button>
+        <button id="btn-wipe-cancel" class="ghost">Cancel</button>
+      </div>
+      <label class="checkline"><input type="checkbox" id="wipe-keep-settings" checked> keep my settings and blocklist</label>
+    </div>
+    <div class="stat-strip" id="data-stats"></div>
+  </section>
+
+  <!-- ================= CONNECTION ================= -->
+  <section id="connection" class="card">
+    <h2>Connection</h2>
+    <div class="field-grid">
+      <label class="field">
+        <span>Backend address</span>
+        <input type="text" id="set-backendUrl" placeholder="http://127.0.0.1:8765" spellcheck="false">
+        <small>Your local Flask server. Nothing is ever sent anywhere else.</small>
+      </label>
+      <label class="field">
+        <span>API token</span>
+        <div class="inline">
+          <input type="password" id="set-token" placeholder="paste from data/token.txt" spellcheck="false">
+          <button id="btn-pair" class="ghost">auto-fill</button>
+          <button id="btn-test" class="ghost">test</button>
+        </div>
+        <small>Found in <code>data/token.txt</code>, or printed in the terminal when the server starts.</small>
+      </label>
+    </div>
+    <div id="connection-result" class="result"></div>
+    <h3>Keyboard shortcuts</h3>
+    <table class="keys">
+      <tr><td><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd></td><td>Open this popup</td></tr>
+      <tr><td><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd></td><td>Pause / resume capture</td></tr>
+      <tr><td><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd></td><td>Ask about the current page</td></tr>
+      <tr><td><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></td><td>Forget the current page forever</td></tr>
+    </table>
+    <h3>How it stays honest</h3>
+    <ul class="tight">
+      <li>Answers use only the pages retrieval actually returned — never the model's imagination.</li>
+      <li>Every claim carries a title, a site and a date, so you can click through and check.</li>
+      <li>When nothing matches, the answer is “I don't have anything in your history matching that.”</li>
+      <li>Pages the backend fetched itself are labelled <em>assistant-fetched</em> and are never described as something you read.</li>
+    </ul>
+  </section>
+
+  <footer class="page-foot">
+    <span id="version">Twin-Brain</span>
+    <span class="muted">Local-first by design: your memory lives in a SQLite file on your own machine.</span>
+  </footer>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script type="module" src="options.js"></script>
+</body>
+</html>
