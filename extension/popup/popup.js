@@ -209,6 +209,12 @@ function reveal(parent, node, token) {
   return true;
 }
 
+function dwellLabel(seconds) {
+  const s = Math.max(0, Math.round(Number(seconds) || 0));
+  if (s < 60) return `${s}s`;
+  return `${Math.round(s / 60)}m`;
+}
+
 function addMeta(node, data) {
   const meta = el('div', 'meta');
   meta.appendChild(el('span', `badge ${data.grounded ? 'ok' : 'warn'}`,
@@ -236,6 +242,9 @@ async function renderAnswerLive(node, data, query, token, streamBox) {
       node.insertBefore(em, streamBox);
     }
     streamBox.classList.add('reveal', 'done');
+    if (conv.researchNote || data.researchNote) {
+      await typeBlock(node, 'honesty', conv.researchNote || data.researchNote, token);
+    }
     if (conv.questionBack) await typeBlock(node, 'friend-question', conv.questionBack, token);
     const citations = data.citations || [];
     if (citations.length) {
@@ -250,7 +259,8 @@ async function renderAnswerLive(node, data, query, token, streamBox) {
         main.appendChild(a);
         main.appendChild(el('span', `badge ${citeItem.kind === 'web' ? 'warn' : 'ok'}`, citeItem.kind));
         main.appendChild(el('span', 'site',
-          `${(citeItem.domain || '').replace(/^www\./, '')} · ${citeItem.when || ''}`));
+          `${(citeItem.domain || '').replace(/^www\./, '')} · ${citeItem.when || ''}` +
+          (citeItem.dwell ? ` · ${dwellLabel(citeItem.dwell)} on page` : '')));
         row.appendChild(main);
         box.appendChild(row);
       });
@@ -378,7 +388,7 @@ async function renderAnswerLive(node, data, query, token, streamBox) {
       main.appendChild(el('span', `badge ${kind === 'web' ? 'warn' : 'ok'}`, kind));
       main.appendChild(el('span', 'site',
         `${(citeItem.domain || '').replace(/^www\./, '')} · ${citeItem.when || 'visited —'}` +
-        (citeItem.dwell ? ` · ${Math.round(citeItem.dwell / 60)}m on page` : '')));
+        (citeItem.dwell ? ` · ${dwellLabel(citeItem.dwell)} on page` : '')));
       row.appendChild(main);
       box.appendChild(row);
     });
@@ -400,8 +410,10 @@ async function renderAnswerLive(node, data, query, token, streamBox) {
   }
 
   if (ex.honesty && !await typeBlock(node, 'honesty', ex.honesty, token)) return;
+  if (conv.researchNote && !await typeBlock(node, 'honesty', conv.researchNote, token)) return;
   if (ex.closing && !await typeBlock(node, 'closing', ex.closing, token)) return;
-  if (conv.questionBack && !await typeBlock(node, 'friend-question', conv.questionBack, token)) return;
+  if (conv.questionBack && !conv.questionBack.includes('go deeper on any point') &&
+      !await typeBlock(node, 'friend-question', conv.questionBack, token)) return;
 
   if (ex.followups && ex.followups.length) {
     const chips = el('div', 'followups reveal');

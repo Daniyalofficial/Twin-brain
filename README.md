@@ -168,6 +168,35 @@ refines the query from the gaps and searches again (default 3 hops, daily
 budget, every hop audited) — deep-reading full pages when snippets are thin.
 Still permission-gated: `ask` / `always` / `never`.
 
+## Hardened from real-world use
+
+Every one of these came from an actual conversation with the twin, and each has
+a regression test in `tests/js/fieldfixes.test.mjs`:
+
+- **Grounded answers always cite.** The quote floor is adaptive
+  (`max(0.20, best × 0.55)`, never above the best score), so a confident opener
+  can never sit on top of an empty lesson again.
+- **Search-result pages are link-only.** Google/Bing/DDG/YouTube result pages
+  are detected at capture time (`classifyUrl` → `no_ai`), and a one-off startup
+  migration purges SERP chunks older builds already stored — their scraped
+  snippets never enter the AI's knowledge.
+- **Junk sentences never get taught.** Nav pipes (`Title | Site`), ellipsis
+  fragments (`When Tar...`), breadcrumbs, "Uploaded to YouTube" trailers,
+  `### 1.` markdown artefacts and title echoes are filtered before any lesson
+  sentence is picked.
+- **"whats my name" is an identity question**, answered from the facts you told
+  the twin (name, work, city, goals, notes) — never from fuzzy retrieval.
+- **"Summarise my day" is a recap**, not a stats question.
+- **Web search has a provider cascade** — DuckDuckGo HTML → DuckDuckGo Lite →
+  Bing — and when every provider fails the popup says so honestly instead of
+  staying silent. "seach the web" (typo included) is understood anywhere in the
+  message.
+- **Interests track real page ids** (`pages` is always a number — no more
+  "undefined page(s) in your memory"), and interest topics are derived from the
+  junk-free body text, not page headers.
+- **Related reading is deduped** against citations, and reading time under a
+  minute shows seconds, not "0m".
+
 ## The privacy model
 
 The single source of truth for "may we capture this?" is `server/capture.py:check_url`,
@@ -328,11 +357,12 @@ locally so privacy keeps working while the backend is offline.
 ## Development
 
 ```bash
-./.venv/bin/python -m unittest discover -s tests -v   # 97 tests, no network needed
-node --test tests/js/                                 # 94 on-device brain tests:
+./.venv/bin/python -m unittest discover -s tests -v   # 108 tests, no network needed
+node --test tests/js/                                 # 112 on-device brain tests:
                                                       # retrieval, real-time friend,
-                                                      # twin core + full end-to-end
-                                                      # run against an in-memory IDB
+                                                      # twin core, field regressions
+                                                      # + full end-to-end runs
+                                                      # against an in-memory IDB
 ./.venv/bin/python scripts/make_icons.py              # regenerate extension icons
 ./.venv/bin/python scripts/seed_demo.py --wipe        # demo memory
 ```

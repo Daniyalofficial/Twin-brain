@@ -5,7 +5,14 @@
  * unwrapped from DDG's redirect. Everything is budgeted and audited locally.
  */
 
-const ENDPOINT = 'https://html.duckduckgo.com/html/?q=';
+/** Search endpoints tried in order until one returns usable results.
+ *  Any single endpoint can rate-limit or change markup — the fallbacks make
+ *  "search the web" actually work in the field. */
+const ENDPOINTS = [
+  { name: 'duckduckgo', url: (q) => `https://html.duckduckgo.com/html/?q=${q}`, parse: (html, limit) => parseDdgHtml(html, limit) },
+  { name: 'duckduckgo-lite', url: (q) => `https://lite.duckduckgo.com/lite/?q=${q}`, parse: (html, limit) => parseDdgLiteHtml(html, limit) },
+  { name: 'bing', url: (q) => `https://www.bing.com/search?q=${q}&count=10`, parse: (html, limit) => parseBingHtml(html, limit) },
+];
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
            '(KHTML, like Gecko) Chrome/126.0 Safari/537.36 TwinBrain/1.0';
 
@@ -41,6 +48,67 @@ export function parseDdgHtml(html, limit = 8) {
   return results;
 }
 
+/** DuckDuckGo Lite parser (table layout). */
+export function parseDdgLiteHtml(html, limit = 8) {
+  const results = [];
+  if (!html) return results;
+  let doc;
+  try {
+    doc = new DOMParser().parseFromString(html, 'text/html');
+  } catch {
+    return results;
+  }
+  const anchors = doc.querySelectorAll('a.result-link, a[href*="uddg="]');
+  const seen = new Set();
+  for (const a of Array.from(anchors)) {
+    if (results.length >= limit) break;
+    const href = unwrap(a.getAttribute('href') || '');
+    if (!href || !/^https?:\/\//.test(href) || seen.has(href)) continue;
+    if (/duckduckgo\.com/.test(href)) continue;
+    const title = (a.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!title || title.length < 8) continue;
+    let snippet = '';
+    const row = a.closest('tr');
+    const next = row && row.nextElementSibling;
+    if (next) {
+      const cell = next.querySelector('td.result-snippet') || next.querySelector('td');
+      if (cell) snippet = (cell.textContent || '').replace(/\s+/g, ' ').trim();
+    }
+    seen.add(href);
+    results.push({ title, url: href, snippet: snippet.slice(0, 400) });
+  }
+  return results;
+}
+
+/** Bing parser (b_algo blocks). */
+export function parseBingHtml(html, limit = 8) {
+  const results = [];
+  if (!html) return results;
+  let doc;
+  try {
+    doc = new DOMParser().parseFromString(html, 'text/html');
+  } catch {
+    return results;
+  }
+  const blocks = doc.querySelectorAll('li.b_algo');
+  const seen = new Set();
+  for (const block of Array.from(blocks)) {
+    if (results.length >= limit) break;
+    const a = block.querySelector('h2 a') || block.querySelector('a');
+    if (!a) continue;
+    const href = unwrap(a.getAttribute('href') || '');
+    if (!href || !/^https?:\/\//.test(href) || seen.has(href)) continue;
+    if (/bing\.com|microsoft\.com/.test(href)) continue;
+    const title = (a.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!title || title.length < 8) continue;
+    const snip = block.querySelector('p, .b_caption p, .b_lineclamp2');
+    const snippet = snip ? (snip.textContent || '').replace(/\s+/g, ' ').trim() : '';
+    seen.add(href);
+    results.push({ title, url: href, snippet: snippet.slice(0, 400) });
+  }
+  return results;
+}
+
 export function unwrap(href) {
   if (!href) return '';
   let url = href;
@@ -52,20 +120,33 @@ export function unwrap(href) {
   return url;
 }
 
-/** Budgeted outbound search. `audit` is a callback the caller persists. */
+/** Budgeted outbound search with provider fallback. One call = one budget unit. */
 export async function searchWeb(query, { limit = 6, audit = null } = {}) {
   const started = Date.now();
-  const entry = { query, provider: 'duckduckgo', kind: 'answer',
-                  created_at: new Date().toISOString(), status: 'ok', results: [] };
-  try {
-    const res = await fetch(ENDPOINT + encodeURIComponent(query),
-      { headers: { 'User-Agent': UA, Accept: 'text/html' }, redirect: 'follow' });
-    if (!res.ok) throw new Error(`http ${res.status}`);
-    const html = await res.text();
-    entry.results = parseDdgHtml(html, limit);
-    if (!entry.results.length) entry.status = 'no_results';
-  } catch (error) {
-    entry.status = `error: ${String(error.message || error).slice(0, 120)}`;
+  const entry = { query, provider: 'none', kind: 'answer',
+                  created_at: new Date().toISOString(), status: 'no_results', results: [] };
+  let lastError = null;
+  for (const endpoint of ENDPOINTS) {
+    try {
+      const res = await fetch(endpoint.url(encodeURIComponent(query)),
+        { headers: { 'User-Agent': UA, Accept: 'text/html' }, redirect: 'follow' });
+      if (!res.ok) { lastError = `${endpoint.name} http ${res.status}`; continue; }
+      const html = await res.text();
+      const results = endpoint.parse(html, limit);
+      if (results.length) {
+        entry.provider = endpoint.name;
+        entry.results = results;
+        entry.status = 'ok';
+        break;
+      }
+      lastError = `${endpoint.name}: no parseable results`;
+    } catch (error) {
+      lastError = `${endpoint.name}: ${String(error.message || error).slice(0, 80)}`;
+    }
+  }
+  if (entry.status !== 'ok') {
+    entry.status = lastError && lastError.includes('http')
+      ? `error: ${lastError.slice(0, 120)}` : 'no_results';
   }
   entry.took_ms = Date.now() - started;
   if (audit) { try { await audit(entry); } catch { /* never break the answer */ } }

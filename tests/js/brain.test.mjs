@@ -271,7 +271,7 @@ test('web results are badged, numbered after memory, and further-reading links c
   assert.equal(ex.citations[ex.citations.length - 1].n, ex.citations.length);
   assert.ok(ex.webNotes.length === 1);
   assert.ok(ex.citations.some((c) => c.url === 'https://bake.test/crumb' && c.kind === 'web'));
-  // cited web pages are not repeated in further reading; extra web results are
+  // cited web pages are never repeated in further reading (dedupe contract)
   const more = explain({
     query: 'sourdough', result, usedWeb: true, interests: [],
     webResults: [
@@ -280,7 +280,9 @@ test('web results are badged, numbered after memory, and further-reading links c
       { title: 'Crumb guide three', url: 'https://bake.test/c', snippet: 'Oven spring matters too.' }
     ]
   });
-  assert.ok(more.further.some((f) => f.url === 'https://bake.test/c'));
+  assert.ok(more.citations.some((c) => c.url === 'https://bake.test/c'));
+  assert.ok(!more.further.some((f) => more.citations.some((c) => c.url === f.url)),
+            'further reading never repeats a cited source');
 });
 
 test('advice and smalltalk contain no fabricated page claims', () => {

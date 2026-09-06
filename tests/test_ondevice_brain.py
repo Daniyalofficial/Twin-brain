@@ -255,3 +255,71 @@ class TwinCoreTests(unittest.TestCase):
         for fragment in ('id="set-neuralBackend"', 'id="set-ollamaUrl"', 'id="set-sendMemoryToCloud"',
                          'id="btn-modelfile"', 'id="btn-neural-test"', 'id="set-researchHops"'):
             self.assertIn(fragment, self.options_html)
+
+
+class FieldFixTests(unittest.TestCase):
+    """Drift guards for the September 2026 live-usage bug fixes."""
+
+    def setUp(self):
+        self.settings = read("lib/settings.js")
+        self.websearch = read("lib/brain/websearch.js")
+        self.understand = read("lib/brain/understand.js")
+        self.brain = read("lib/brain/brain.js")
+        self.explain = read("lib/brain/explain.js")
+        self.text = read("lib/brain/text.js")
+        self.retrieve = read("lib/brain/retrieve.js")
+        self.lexical = read("lib/brain/lexical.js")
+        self.popup = read("popup/popup.js")
+
+    def test_search_result_pages_are_link_only(self):
+        self.assertIn("isSearchResultsPage", self.settings)
+        self.assertIn("search results page (link only)", self.settings)
+        self.assertIn("mode: 'no_ai'", self.settings)
+        # plus the one-off purge of SERP chunks captured by older builds
+        self.assertIn("isSerpUrl", self.brain)
+        self.assertIn("serpPurge", self.brain)
+
+    def test_websearch_has_a_provider_cascade(self):
+        for fragment in ("html.duckduckgo.com/html/", "lite.duckduckgo.com/lite/",
+                         "bing.com/search", "parseDdgLiteHtml", "parseBingHtml"):
+            self.assertIn(fragment, self.websearch)
+
+    def test_identity_questions_route_before_retrieval(self):
+        self.assertIn("IDENTITY_RE", self.understand)
+        self.assertIn("'identity'", self.understand)
+        self.assertIn("parsed.type === 'identity'", self.brain)
+
+    def test_meta_regex_no_longer_swallows_recaps(self):
+        meta_line = [l for l in self.understand.splitlines() if l.startswith("const META_RE")][0]
+        self.assertNotIn("summar", meta_line)
+        self.assertNotIn("my day", meta_line)
+
+    def test_web_intent_detected_anywhere_in_message(self):
+        self.assertIn("WANTS_WEB_ANY_RE", self.understand)
+        self.assertIn("wantsWeb", self.understand)
+        self.assertIn("parsed.wantsWeb", self.brain)
+
+    def test_quote_floor_is_adaptive_so_grounded_answers_cite(self):
+        self.assertIn("Math.min(bestRelevance, Math.max(MIN_GROUNDING, bestRelevance * 0.55))",
+                      self.retrieve)
+
+    def test_grounded_requires_citable_material(self):
+        self.assertIn("(Boolean(result && result.grounded) && cited.length > 0)", self.explain)
+        self.assertIn("furtherUrls", self.explain)
+
+    def test_interest_rows_track_page_ids_not_raw_numbers(self):
+        self.assertIn("pageIds", self.brain)
+        self.assertIn("pages: row.pageIds.length", self.brain)
+
+    def test_junk_sentence_filtering(self):
+        self.assertIn("isJunkSentence", self.text)
+        self.assertIn("JUNK_RE", self.text)
+        self.assertIn("bestSentences(text, terms, n = 3, title = '')", self.text)
+
+    def test_small_corpus_idf_floor(self):
+        self.assertIn("Math.max(8, N)", self.lexical)
+
+    def test_popup_reports_research_failures_and_dwell_seconds(self):
+        self.assertIn("researchNote", self.popup)
+        self.assertIn("dwellLabel", self.popup)
+        self.assertIn("researchNote", self.brain)

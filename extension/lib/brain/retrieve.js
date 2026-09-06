@@ -14,7 +14,10 @@ export const LEXICAL_CAP = 0.42;          // vector-only hits from a lexical emb
 export const RECENCY_HALFLIFE_DAYS = 14;
 
 export function quoteFloor(bestRelevance) {
-  return Math.max(0.50, bestRelevance * 0.62);
+  // Adaptive: a grounded answer (best >= 0.20) must always be able to cite
+  // its best match — a fixed 0.50 floor silently produced "grounded" answers
+  // with an empty lesson body. Never above the best score itself.
+  return Math.min(bestRelevance, Math.max(MIN_GROUNDING, bestRelevance * 0.55));
 }
 
 /**
@@ -86,7 +89,8 @@ export function retrieve(chunks, index, query, { topK = 8 } = {}) {
       assistantFetched: item.chunk.source === 'web_enrichment',
       text: item.chunk.pageText || item.chunk.text,
       excerpt: item.chunk.text,
-      sentences: bestSentences(item.chunk.pageText || item.chunk.text, terms, 3),
+      sentences: bestSentences(item.chunk.pageText || item.chunk.text, terms, 3,
+                               item.chunk.title),
       scores: {
         relevance: round4(item.relevance), final: round4(final),
         vectorRaw: round4(item.raw), lexical: round4(item.bm25),

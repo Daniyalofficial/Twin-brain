@@ -239,8 +239,28 @@ export function classifyUrl(url, settings) {
     }
   }
 
+  // Search-result pages are what you SEARCHED, not what you LEARNED: keep the
+  // link ("you searched tarzan history"), but their scraped snippets must never
+  // enter the AI's knowledge or pollute answers.
+  if (isSearchResultsPage(u, lowered)) {
+    return Object.assign(result, { allowed: true, mode: 'no_ai', content: false,
+                                   reason: 'search results page (link only)' });
+  }
+
   return Object.assign(result, { allowed: true, mode: 'full', content: true,
                                  reason: 'ok' });
+}
+
+const SEARCH_HOSTS = /(^|\.)(google|bing|yahoo|duckduckgo|yandex|baidu|ecosia|startpage|search\.brave|qwant)\.[a-z.]{2,}$/;
+
+export function isSearchResultsPage(u, lowered) {
+  const host = (u && u.hostname) || '';
+  if (/youtube\.com$/.test(host) && lowered.includes('/results')) return true;
+  if (!SEARCH_HOSTS.test(host)) return false;
+  const path = (u && u.pathname) || '';
+  // google.com/search?q=…, bing.com/search?q=…, duckduckgo.com/?q=…
+  return /[?&](q|query|text|search_query|wd)=/.test(lowered) ||
+         path === '/search' || path.startsWith('/search/');
 }
 
 /** Convenience wrapper used by the background worker before any injection. */

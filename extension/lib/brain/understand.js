@@ -32,8 +32,10 @@ const ANAPHORA_START = /^(?:and|but|so|also|ok|okay|then)?[\s,]*(?:what|how|why|
 const PRONOUN_ONLY = /^(?:what|how|why|tell me)?\s*(?:about|of|on)?\s*(?:it|that|this|those|them|these)\s*[?.!]*$/i;
 
 const SMALLTALK_RE = /^(?:hi|hey|hello|yo|sup|assalam|salam|how are you|how's it going|good (?:morning|evening|afternoon|night)|thanks|thank you|shukriya|who are you|what are you|your name|love you|you are (?:great|awesome|amazing|cool|smart|the best)|you're (?:great|awesome|amazing|cool|smart|the best)|good bot|bye|goodbye|see you|khuda hafiz)\b/i;
-const META_RE = /\b(?:my day|my stats|how much have i read|reading time|how many pages (?:do i have|total)|summar[i]se my|my memory|what do you (?:know|hold)|your stats)\b/i;
+const META_RE = /\b(?:my stats|how many pages (?:do i have|total)|my memory|what do you (?:know|hold) about me\b|your stats|brain stats)\b/i;
+const IDENTITY_RE = /\b(?:who am i|what(?:'s| is|s) my name|do you (?:know|remember) my name|my name\?|what do you (?:know|remember) about me|tell me about myself|my profile)\b/i;
 const WANTS_WEB_RE = /^(?:web|search the web|google|online)[:! ]/i;
+const WANTS_WEB_ANY_RE = /\b(?:s(?:ea|ear|e)?ar?ch|seach|serach|check|find|look(?:ing)?\s+(?:\w+\s+)?up)\s+(?:\w+\s+){0,3}?(?:on\s+|from\s+)?(?:the\s+)?(?:web|internet|online|google)\b/i;
 
 // --- personal facts ---------------------------------------------------------
 
@@ -85,7 +87,10 @@ export function parseTimeRange(text) {
 export function questionType(text) {
   const s = String(text || '').trim();
   if (SMALLTALK_RE.test(s)) return 'smalltalk';
+  if (IDENTITY_RE.test(s) && !/\bmy name is\b/i.test(s)) return 'identity';
   if (WANTS_WEB_RE.test(s)) return 'web';
+  if (/\b(?:summar[i]?[sz]e|recap)\b.*\b(?:my|today|week|day|reading)\b/i.test(s) ||
+      /\bwhat (?:did|have) i read\b/i.test(s)) return 'recap';
   if (META_RE.test(s)) return 'meta';
   if (/\bdifference between\b|\bcompare\b|\bvs\.?\b|\bversus\b/i.test(s)) return 'compare';
   if (/^(?:when|what (?:date|day|time))\b|\bwhen did i\b/i.test(s)) return 'when';
@@ -149,6 +154,7 @@ export function parseQuery(query, ctx = {}) {
 
   return {
     raw, type, timeRange, quoted, topicWords: [...new Set(topicWords)],
+    wantsWeb: WANTS_WEB_RE.test(raw) || WANTS_WEB_ANY_RE.test(raw),
     stemmed: [...new Set(topicWords.map(stem))],
     factStatements, anaphora, resolvedQuery, ambiguous,
     isQuestion: /\?$/.test(raw) || /^(?:what|when|where|which|who|why|how|did|do|does|is|are|was|were|can|should|could|would)\b/i.test(raw),

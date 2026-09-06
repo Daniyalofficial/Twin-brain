@@ -73,7 +73,12 @@ export class LexicalIndex {
       for (const variant of variants.slice(0, 8)) {
         const df = this.df.get(variant.term) || 0;
         if (!df) continue;
-        const idf = Math.log(1 + (N - df + 0.5) / (df + 0.5));
+        // Small-corpus IDF floor: with N=2, every term has df==N and classic
+        // BM25 IDF collapses to ~0.3, so obvious title matches ("who are
+        // tarzans" over two Tarzan pages) could never clear the evidence gate.
+        // Flooring the collection size at 8 keeps big-corpus maths untouched.
+        const Neff = Math.max(8, N);
+        const idf = Math.log(1 + (Neff - df + 0.5) / (df + 0.5));
         if (idf <= 0) continue;
         for (const [id, doc] of this.docs) {
           const tf = countTerm(doc.tokens, variant.term);

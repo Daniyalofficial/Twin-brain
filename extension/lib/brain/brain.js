@@ -34,6 +34,7 @@ import { researchLoop } from './research.js';
 import { searchWeb, fetchPageText } from './websearch.js';
 import {
   contentWords, queryTerms, splitSentences, stem, humanTime, fmtDuration, truncate,
+  isJunkSentence,
 } from './text.js';
 
 const state = {
@@ -54,7 +55,21 @@ export async function ensureLoaded() {
   if (state.loaded) return state;
   if (state.loading) return state.loading;
   state.loading = (async () => {
-    const chunks = await store.getAllChunks();
+    let chunks = await store.getAllChunks();
+    // One-off migration: older builds captured search-engine result pages and
+    // their scraped snippets polluted answers ("The Legend of Tarzan —
+    // google.com/search?q=…"). Capture now marks SERPs link-only; this cleans
+    // up whatever is already in the store.
+    if (!(await store.getMeta('serpPurge'))) {
+      const serpPageIds = new Set(chunks.filter((chunk) => isSerpUrl(chunk.url))
+                                        .map((chunk) => chunk.pageId));
+      for (const pageId of serpPageIds) {
+        await store.deleteChunksByPage(pageId);
+        state.pages.delete(pageId);
+      }
+      if (serpPageIds.size) chunks = chunks.filter((chunk) => !serpPageIds.has(chunk.pageId));
+      await store.setMeta('serpPurge', new Date().toISOString());
+    }
     state.chunks = chunks;
     state.index.clear();
     for (const chunk of chunks) {
@@ -160,14 +175,31 @@ const GENERIC = new Set(['page', 'http', 'https', 'com', 'www', 'html', 'web',
 
 export async function learnInterests(page) {
   await ensureLoaded();
-  const byTopic = new Map(state.interests.map((row) => [row.topic, row]));
+  // rebuild rows defensively: older stored rows may carry `pages` as a number
+  const byTopic = new Map();
+  for (const row of state.interests) {
+    const pageIds = Array.isArray(row.pageIds) ? row.pageIds.slice()
+      : (Array.isArray(row.pages) ? row.pages.slice() : []);
+    byTopic.set(row.topic, { topic: row.topic, weight: Number(row.weight) || 0,
+                             pageIds, lastAgo: row.lastAgo || '' });
+  }
   const weights = new Map();
+  // Interests must come from what the page actually TEACHES: strip nav crumbs,
+  // SERP echoes and title repeats first, or every interest list fills up with
+  // words like "saturday", "evening", "post" from the page header.
+  const cleanText = splitSentences(page.text || '')
+    .filter((sentence) => !isJunkSentence(sentence, page.title || ''))
+    .join(' ');
   const titleWords = contentWords(page.title || '');
-  const bodyWords = contentWords((page.text || '').slice(0, 3000));
+  const bodyWords = contentWords(cleanText.slice(0, 3000));
   const dwellBoost = 1 + Math.min(3, (page.dwellSeconds || 0) / 300);
-  for (const word of titleWords) weights.set(word, (weights.get(word) || 0) + 2.2 * dwellBoost);
   const counts = new Map();
   for (const word of bodyWords) counts.set(word, (counts.get(word) || 0) + 1);
+  // title words only count when the clean body really discusses them
+  for (const word of titleWords) {
+    if (!counts.has(word)) continue;
+    weights.set(word, (weights.get(word) || 0) + 2.2 * dwellBoost);
+  }
   for (const [word, count] of counts) {
     if (GENERIC.has(word) || count < 2) continue;
     weights.set(word, (weights.get(word) || 0) + Math.log1p(count) * dwellBoost);
@@ -175,9 +207,10 @@ export async function learnInterests(page) {
   const pageId = page.pageId || hashId(page.url);
   for (const [topic, weight] of weights) {
     if (weight < 2.5) continue;
-    const row = byTopic.get(topic) || { topic, weight: 0, pages: [], lastAgo: '' };
+    const row = byTopic.get(topic) || { topic, weight: 0, pageIds: [], lastAgo: '' };
     row.weight = Math.round((row.weight + weight) * 100) / 100;
-    if (!row.pages.includes(pageId)) row.pages.push(pageId);
+    if (!row.pageIds.includes(pageId)) row.pageIds.push(pageId);
+    if (row.pageIds.length > 60) row.pageIds = row.pageIds.slice(-60);
     row.lastAgo = humanTime(page.visitedAt || Date.now());
     byTopic.set(topic, row);
   }
@@ -185,7 +218,8 @@ export async function learnInterests(page) {
     .sort((a, b) => b.weight - a.weight)
     .slice(0, 60)
     .map((row) => ({ topic: row.topic, weight: row.weight,
-                     pages: row.pages.length, lastAgo: row.lastAgo }));
+                     pages: row.pageIds.length, lastAgo: row.lastAgo,
+                     pageIds: row.pageIds }));
   await store.putInterests(state.interests);
   return state.interests;
 }
@@ -354,6 +388,32 @@ export async function answer(query, options = {}, settings = {}, hooks = {}) {
              conversation: { name, empathy: empathyLine(parsed.raw) } };
   }
 
+  // --- "who am I to you?" — answer from the facts the user gave us ---------
+  if (parsed.type === 'identity') {
+    const lines = [];
+    if (facts.name) lines.push(`You're ${facts.name.value} — you told me yourself, and I never forget.`);
+    else lines.push('You haven\'t told me your name yet — say "my name is …" and I\'ll remember it (only inside this browser).');
+    if (facts.job) lines.push(`You work as ${facts.job.value}.`);
+    if (facts.lives) lines.push(`You live in ${facts.lives.value}.`);
+    if (facts.learning) lines.push(`You're learning ${facts.learning.value} — we're in this together.`);
+    if (facts.likes) lines.push(`You love ${facts.likes.value}.`);
+    if (facts.dislikes) lines.push(`You can't stand ${facts.dislikes.value}.`);
+    if (facts.goal) lines.push(`Your goal: ${facts.goal.value}.`);
+    const recentNotes = (facts.notes || []).slice(-3);
+    if (recentNotes.length) {
+      lines.push(`You asked me to remember: ${recentNotes.map((n) => `“${truncate(n.value, 70)}”`).join('; ')}.`);
+    }
+    if (state.interests.length) {
+      lines.push(`And from your reading, you're clearly into ${state.interests.slice(0, 5).map((i) => i.topic).join(', ')}.`);
+    }
+    lines.push(`(I hold ${stats.pages} page(s) of your reading right now — all on this device, all yours.)`);
+    const text = lines.join('\n');
+    await store.putConversation({ query: parsed.raw, mode: 'identity', type: 'identity',
+                                  topic: '', answer: truncate(text, 300) });
+    return { mode: 'chat', text, grounded: true, citations: [], followups: [],
+             conversation: { name } };
+  }
+
   // --- too vague to answer honestly? ask instead of guessing ---------------
   if (parsed.ambiguous) {
     const chips = state.interests.slice(0, 3)
@@ -404,8 +464,10 @@ export async function answer(query, options = {}, settings = {}, hooks = {}) {
   let usedWeb = false;
   let webDenied = Boolean(options.denied);
   let needsPermission = false;
+  let researchLog = null;
 
-  const explicitWeb = parsed.type === 'web' || options.useWeb === true;
+  const explicitWeb = parsed.type === 'web' || parsed.wantsWeb === true ||
+                      options.useWeb === true;
   if ((!result.grounded && !memoryOnly && !storyMode) || explicitWeb) {
     if (permission === 'never' || webDenied) {
       webDenied = true;
@@ -428,6 +490,7 @@ export async function answer(query, options = {}, settings = {}, hooks = {}) {
         deepRead: settings.webDeepRead !== false,
         note,
       });
+      researchLog = research;
       webResults = research.results || [];
       usedWeb = webResults.length > 0;
       if (usedWeb && settings.webDeepRead !== false) {
@@ -454,6 +517,7 @@ export async function answer(query, options = {}, settings = {}, hooks = {}) {
     thinking: notes,
     emotion: emotion.primary,
     tone: tone.mood,
+    researchNote: (researchLog && !usedWeb) ? researchNote(researchLog) : null,
   };
 
   if (needsPermission) {
@@ -505,6 +569,7 @@ export async function answer(query, options = {}, settings = {}, hooks = {}) {
       if (talkative) conversationBase.questionBack = questionBack(facts, state.interests, parsed);
       return {
         mode: 'neural', text, citations, grounded, usedWeb, webDenied,
+        researchNote: conversationBase.researchNote,
         providerLabel: provider.label, anaphora: parsed.anaphora,
         conversation: conversationBase,
         retrieval: {
@@ -534,7 +599,6 @@ export async function answer(query, options = {}, settings = {}, hooks = {}) {
     { pages: pagesNow(), interests: state.interests });
   if (direct) {
     conversationBase.short = direct.text;
-    conversationBase.hedge = direct.found ? null : hedgeLine(finalResult.bestRelevance);
     if (direct.citations.length) {
       const seen = new Set(direct.citations.map((c) => c.url));
       const merged = direct.citations.concat(
@@ -542,8 +606,6 @@ export async function answer(query, options = {}, settings = {}, hooks = {}) {
       merged.forEach((c, i) => { c.n = i + 1; });
       explanation.citations = merged;
     }
-  } else {
-    conversationBase.hedge = hedgeLine(finalResult.bestRelevance);
   }
 
   let adviceText = null;
@@ -554,6 +616,7 @@ export async function answer(query, options = {}, settings = {}, hooks = {}) {
   if (talkative) conversationBase.questionBack = questionBack(facts, state.interests, parsed);
 
   const grounded = explanation.grounded || Boolean(direct && direct.found);
+  conversationBase.hedge = grounded ? hedgeLine(finalResult.bestRelevance) : null;
   await store.putConversation({
     query: parsed.raw, mode: parsed.type, type: parsed.type, grounded,
     topic: parsed.topicWords.join(' '),
@@ -623,6 +686,31 @@ export async function saveFacts(statements) {
                                at: new Date().toISOString() });
   }
   return statements.length;
+}
+
+/** Search-engine result pages: keep the link, never feed the AI their content. */
+export function isSerpUrl(url) {
+  let u;
+  try { u = new URL(String(url || '')); } catch { return false; }
+  const host = u.hostname.toLowerCase();
+  if (/youtube\.com$/.test(host) && u.pathname === '/results') return true;
+  const searchHost = /(^|\.)(google|bing|yahoo|duckduckgo|yandex|baidu|ecosia|startpage|qwant)\.[a-z.]{2,}$/.test(host) ||
+                     host === 'search.brave.com';
+  if (!searchHost) return false;
+  const lower = String(url).toLowerCase();
+  return /[?&](q|query|text|search_query|wd)=/.test(lower) ||
+         u.pathname === '/search' || u.pathname.startsWith('/search/');
+}
+
+function researchNote(log) {
+  const status = String((log && log.status) || '');
+  if (status === 'budget') {
+    return 'Today\'s web budget is used up (Options → web lookups per day). I can still answer from memory.';
+  }
+  if (status.startsWith('error')) {
+    return `I tried the web just now, but the search endpoints refused me (${status.slice(0, 60)}). They sometimes rate-limit automated searches — try again in a minute, or rephrase.`;
+  }
+  return 'I searched the web live but found nothing usable for this exact question. Try rephrasing, or ask me to look for a specific site.';
 }
 
 function domainOf(url) {

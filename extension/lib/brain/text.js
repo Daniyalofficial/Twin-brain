@@ -44,7 +44,13 @@ export function contentWords(text) {
 }
 
 export function queryTerms(text) {
-  return tokenize(text).filter((w) => !MATCH_STOPWORDS.has(w) && w.length > 1);
+  // Stemmed + deduped: the lexical index stores stemmed tokens, so "tarzans"
+  // must query as "tarzan" or plurals only match through weak variants.
+  const terms = tokenize(text)
+    .filter((w) => !MATCH_STOPWORDS.has(w) && w.length > 1)
+    .map(stem)
+    .filter((w) => w.length > 1);
+  return [...new Set(terms)];
 }
 
 /** Porter-lite: enough morphology for prefix-tolerant matching on-device. */
@@ -90,15 +96,39 @@ export function stem(word) {
 
 export function splitSentences(text) {
   return String(text || '')
+    .replace(/#{1,6}\s*\d*\.?/g, ' ')            // strip "### 1." markdown artefacts
     .replace(/\s+/g, ' ')
-    .split(/(?<=[.!?])\s+(?=["'([[]?[A-Z0-9])/)
+    .split(/(?<=[.!?])\s+(?=["'([[]?[-–—•]?\s?[A-Z0-9])/)
+    // headers often end in a bare date ("… | The Saturday Evening Post
+    // 06-Aug-2021 Tarzan is really…") — split after year tokens so the real
+    // sentence is not glued to (and killed with) the junk in front of it
+    .flatMap((sentence) => sentence.split(/(?<=\b\d{4})\s+(?=[A-Z])/))
     .map((s) => s.trim())
     .filter((s) => s.length > 25);
 }
 
+const JUNK_RE = /(\.\.\.|…|\s\|\s|^[-–—•*>]|\b(?:uploaded to youtube|subscribe|sign in|sign up|log in|log out|copyright|all rights reserved|advertisement|sponsored|trending|share this|follow us|skip to|jump to|newsletter|privacy policy|terms of (?:service|use))\b)/i;
+
+/** Nav crumbs, SERP echoes and title repeats are not teachable sentences. */
+export function isJunkSentence(sentence, title) {
+  if (JUNK_RE.test(sentence)) return true;
+  if (title) {
+    const titleTokens = new Set(contentWords(title).map(stem));
+    const sentenceTokens = [...new Set(contentWords(sentence).map(stem))];
+    if (titleTokens.size && sentenceTokens.length) {
+      let overlap = 0;
+      for (const token of sentenceTokens) if (titleTokens.has(token)) overlap += 1;
+      const ratio = overlap / sentenceTokens.length;
+      const threshold = sentenceTokens.length <= 10 ? 0.5 : 0.7;
+      if (ratio >= threshold) return true;      // breadcrumb / title echo
+    }
+  }
+  return false;
+}
+
 /** Sentence scoring for quotes: coverage of query terms, length-sanitised. */
-export function bestSentences(text, terms, n = 3) {
-  const sentences = splitSentences(text);
+export function bestSentences(text, terms, n = 3, title = '') {
+  const sentences = splitSentences(text).filter((sentence) => !isJunkSentence(sentence, title));
   if (!sentences.length || !terms.length) return [];
   const scored = sentences.map((sentence) => {
     const tokens = new Set(tokenize(sentence).map(stem));

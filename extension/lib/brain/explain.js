@@ -91,8 +91,12 @@ export function explain(input) {
     const inQuery = stemmedQuery.has(topic);
     const inCites = cited.some((m) => (m.title || '').toLowerCase().includes(topic));
     if (topic && (inQuery || inCites)) {
+      const pageCount = Number(interest.pages);
+      const countPart = Number.isFinite(pageCount) && pageCount > 0
+        ? `${pageCount} page(s) in your memory`
+        : 'living in your memory';
       connect = `This sits right inside your ${interest.topic} interest — ` +
-                `${interest.pages} page(s) in your memory` +
+                countPart +
                 (interest.lastAgo ? `, last touched ${interest.lastAgo}` : '') +
                 '. So you already have roots here; I\'m just adding branches.';
       break;
@@ -123,14 +127,20 @@ export function explain(input) {
     }))
     : [];
 
-  // --- further reading ------------------------------------------------------
+  // --- further reading (deduped: never repeat a cited source) ---------------
   const further = [];
-  linked.forEach((match) => further.push({
+  const furtherUrls = new Set(citations.map((cite) => cite.url));
+  const pushFurther = (item) => {
+    if (!item.url || furtherUrls.has(item.url)) return;
+    furtherUrls.add(item.url);
+    further.push(item);
+  };
+  linked.forEach((match) => pushFurther({
     title: match.title, url: match.url,
     why: `in your memory (${match.visitedAgo}) — related but not a strong match`,
   }));
-  related.forEach((item) => further.push({ title: item.title, url: item.url, why: item.why || 'related page in your memory' }));
-  webResults.slice(usedWeb ? 2 : 0, 6).forEach((item) => further.push({
+  related.forEach((item) => pushFurther({ title: item.title, url: item.url, why: item.why || 'related page in your memory' }));
+  webResults.slice(usedWeb ? 2 : 0, 6).forEach((item) => pushFurther({
     title: item.title, url: item.url, why: 'from the web search',
   }));
 
@@ -143,7 +153,11 @@ export function explain(input) {
   if (topTopic && !stemmedQuery.has(stem(topTopic))) followups.push(`How does this connect to my ${topTopic} reading?`);
   followups.push('Summarise my reading day');
 
-  const grounded = Boolean(result && result.grounded) || cited.length > 0 || webNotes.length > 0;
+  // Honesty contract: an answer is "grounded" only if it actually has
+  // teachable material — a retrieval flag with zero citable matches produced
+  // confident openers over empty lessons. Never again.
+  const grounded = (Boolean(result && result.grounded) && cited.length > 0) ||
+                   webNotes.length > 0;
 
   const out = {
     grounded,
