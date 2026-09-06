@@ -77,11 +77,11 @@ function stat(key, value, sub) {
 
 const SWITCHES = ['captureEnabled', 'captureContent', 'globalPause', 'skipSensitiveUrls',
                   'webSearchEnabled', 'useWebForAnswers', 'enrichmentEnabled',
-                  'notificationsEnabled'];
+                  'notificationsEnabled', 'webDeepRead', 'autoEnrich'];
 const NUMBERS = ['minDwellSeconds', 'retentionDays', 'notificationDailyBudget',
                  'enrichmentDailyBudget', 'webSearchDailyBudget', 'digestHour', 'topK'];
 const TEXTS = ['backendUrl', 'token'];
-const SELECTS = ['answerStyle'];
+const SELECTS = ['answerStyle', 'webPermission', 'talkativeness'];
 
 let saveTimer = null;
 function scheduleSave(patch, label) {
@@ -627,7 +627,24 @@ function init() {
     await loadSettings();
     await refreshStatus();
     await loadSites();
+    await loadBrainStats();
   })();
+}
+
+async function loadBrainStats() {
+  const node = $('#brain-stats');
+  if (!node) return;
+  const response = await send('tb-stats');
+  if (response.ok && response.stats) {
+    const s = response.stats;
+    const budget = s.web_budget || {};
+    node.textContent = `On-device memory: ${s.pages} page(s), ${s.chunks} slice(s), ` +
+      `${fmtDuration(s.dwellSeconds)} of reading, ${s.interests} tracked interest(s). ` +
+      `Web budget today: ${budget.used || 0}/${budget.budget || 0}. ` +
+      `Everything above runs in this browser alone.`;
+  } else {
+    node.textContent = 'Could not read on-device stats (reload the extension and try again).';
+  }
 }
 
 document.addEventListener('DOMContentLoaded', init);

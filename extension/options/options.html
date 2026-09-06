@@ -189,6 +189,45 @@
   </section>
 
   <!-- ================= ANSWERS ================= -->
+  <!-- ================= ON-DEVICE BRAIN ================= -->
+  <section id="brain" class="card">
+    <h2>Your AI brain (on-device)</h2>
+    <p class="note">The whole brain now lives inside the extension: your pages are chunked,
+    indexed and answered from this browser only. No server needed, no internet needed,
+    works offline. The Flask backend is just an optional mirror for the dashboard.</p>
+    <label class="switch-row">
+      <span><strong>Web permission</strong><small>What the AI does when the answer is NOT in your memory.</small></span>
+      <select id="set-webPermission">
+        <option value="ask">Ask me every time (default)</option>
+        <option value="always">Always allow web lookups</option>
+        <option value="never">Never go online — memory only</option>
+      </select>
+    </label>
+    <label class="switch-row">
+      <span><strong>Personality</strong><small>Friendly explains like a teacher and chats; Quiet answers only the facts.</small></span>
+      <select id="set-talkativeness">
+        <option value="friendly">Friendly teacher (default)</option>
+        <option value="quiet">Quiet — facts only</option>
+      </select>
+    </label>
+    <label class="switch-row">
+      <span><strong>Deep-read the top web result</strong><small>After a permitted search, fetch the best page, store it in your memory and explain from the full text.</small></span>
+      <input type="checkbox" id="set-webDeepRead">
+    </label>
+    <label class="switch-row">
+      <span><strong>Nightly self-training</strong><small>Once a day: refresh your interest profile, build your recap notification (max 5/day), and — only when web is "always allowed" — read fresh material about your top interest.</small></span>
+      <input type="checkbox" id="set-autoEnrich">
+    </label>
+    <div class="field-grid">
+      <label class="field">
+        <span>Web lookups per day</span>
+        <input type="number" id="set-webSearchDailyBudget" min="0" max="200" step="5">
+        <small>Hard budget for on-device searches. Every one is logged in the audit trail.</small>
+      </label>
+    </div>
+    <p class="note" id="brain-stats">Loading on-device stats…</p>
+  </section>
+
   <section id="answers" class="card">
     <h2>Answers</h2>
     <label class="switch-row">

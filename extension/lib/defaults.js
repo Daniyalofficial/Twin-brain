@@ -7,6 +7,11 @@
  */
 
 export const DEFAULT_SETTINGS = {
+  // --- on-device brain (works with no backend and no internet) ---
+  webPermission: 'ask',          // 'ask' | 'always' | 'never'
+  talkativeness: 'friendly',     // 'friendly' | 'quiet'
+  webDeepRead: true,             // fetch + store the top web result, with permission
+  autoEnrich: true,               // nightly self-training, only when webPermission=always
   // --- connection ---
   backendUrl: 'http://127.0.0.1:8765',
   token: '',
@@ -34,6 +39,7 @@ export const DEFAULT_SETTINGS = {
   notificationsEnabled: true,
   notificationDailyBudget: 5,  // "only 5 times in a whole day"
   enrichmentDailyBudget: 5,
+  webSearchDailyBudget: 40,      // on-device web lookups per day (permission still required)
 
   // --- answers ---
   answerStyle: 'concise',      // concise | detailed | bullet

@@ -22,7 +22,12 @@ and to stay honest when it does not know something.
 
 ---
 
-## Quickstart
+> **New:** the brain now lives *inside the extension*. Capture, retrieval and
+> answers all work with **no backend, no `run.bat`, and no internet** — see
+> [The on-device brain](#the-on-device-brain-no-backend-needed). The Flask
+> backend below is now an *optional* mirror that powers the web dashboard.
+
+## Quickstart (optional backend + dashboard)
 
 ```bash
 ./run.sh                 # Linux/macOS: creates .venv on first run, then starts
@@ -57,6 +62,42 @@ seeds 18 realistic pages across four topic clusters into a scratch database
 (set `TWINBRAIN_DATA_DIR` first if you want it somewhere specific).
 
 ---
+
+## The on-device brain (no backend needed)
+
+Everything the AI knows lives in your browser:
+
+1. **Capture → remember.** After ~5 s on a page (that isn't excluded), the
+   service worker chunks the text, embeds it with a deterministic on-device
+   hash embedder (`extension/lib/brain/embed.js`, 384-dim, no downloads) and
+   stores it in IndexedDB (`twinbrain` database, `chunks` store). Nothing is
+   ever sent anywhere. The backend, when running, only receives a *copy*.
+2. **Answers.** `tb-query` runs a local hybrid retrieval — BM25 (Lucene-style
+   IDF, title boost, prefix tolerance) fused with cosine similarity, an
+   evidence gate so hash collisions never count as proof, and a recency
+   re-rank. It's the same tuned maths as `server/retrieval.py`, ported to pure
+   JavaScript and unit-tested with `node --test tests/js/`.
+3. **The super explainer.** Answers arrive as a lesson, not a link dump:
+   *In simple words* → *The details* → *Tricky words, translated* (a plain-English
+   dictionary) → *how this connects to YOUR interests* → numbered citations
+   (title + site + when you read it) → **related reading at the very end**.
+4. **Honesty.** If retrieval finds nothing solid, the AI says *"I don't have
+   this in your memory"* and offers the web — it never invents pages, dates or
+   facts. Every factual sentence traces to a cited page.
+5. **Permission-gated web.** When memory is thin the AI **asks first**
+   (popup card: *Allow once / Always allow / Not now*). With permission it
+   searches DuckDuckGo from the service worker, optionally deep-reads the top
+   result into your memory, and explains it in the same teacher voice.
+   Every outbound query is budgeted (default 40/day) and written to a local
+   audit trail. Settings: `webPermission` = `ask` (default) | `always` | `never`.
+6. **Self-training.** A nightly alarm (`tb-daily`) refreshes your interest
+   profile from your own reading, builds your daily recap notification
+   (hard cap 5/day), and — only if you chose *Always allow web* — reads fresh
+   material about your top interest.
+
+Run it: load `extension/` in `chrome://extensions` (Developer mode → Load
+unpacked). That's the whole install. Start `run.bat`/`run.sh` only if you want
+the browser dashboard and the backup mirror.
 
 ## The privacy model
 
@@ -218,7 +259,8 @@ locally so privacy keeps working while the backend is offline.
 ## Development
 
 ```bash
-./.venv/bin/python -m unittest discover -s tests -v   # 55 tests, no network needed
+./.venv/bin/python -m unittest discover -s tests -v   # 80 tests, no network needed
+node --test tests/js/                                 # 28 on-device brain tests
 ./.venv/bin/python scripts/make_icons.py              # regenerate extension icons
 ./.venv/bin/python scripts/seed_demo.py --wipe        # demo memory
 ```

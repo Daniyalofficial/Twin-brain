@@ -16,6 +16,8 @@
 
 import * as api from './lib/api.js';
 import * as store from './lib/store.js';
+import * as brain from './lib/brain/brain.js';
+import { humanTime as timeAgo } from './lib/brain/text.js';
 import {
   DEFAULT_SETTINGS, DOMAIN_MODES
 } from './lib/defaults.js';
@@ -26,6 +28,7 @@ import {
 
 const TICK_ALARM = 'tb-tick';
 const HEARTBEAT_ALARM = 'tb-heartbeat';
+const DAILY_ALARM = 'tb-daily';
 const FLUSH_ALARM = 'tb-flush';
 const SESSION_KEY = 'tabState';
 const COUNTS_KEY = 'counts';
@@ -246,6 +249,7 @@ async function sendCapture(payload, tabState) {
     body.text = '';
     body.capture_content = false;
   }
+  if (body.text && mode === 'full') await rememberLocally(payload);
   const result = body.text ? await api.capture(body) : await api.recordVisit(body);
   if (tabState) {
     tabState.captured = true;
@@ -256,6 +260,45 @@ async function sendCapture(payload, tabState) {
   await snapshot();
   await updateBadge();
   return result;
+}
+
+/** The extension IS the database now: chunk, embed and store in IndexedDB. */
+async function rememberLocally(payload) {
+  try {
+    const url = new URL(payload.url);
+    await brain.ensureLoaded();
+    const existing = brain.pagesNow().find((page) => page.url === payload.url);
+    await brain.ingestPage({
+      url: payload.url,
+      title: payload.title || payload.url,
+      text: payload.text || '',
+      domain: url.hostname,
+      domainLabel: url.hostname.replace(/^www\./, ''),
+      visitedAt: new Date().toISOString(),
+      dwellSeconds: Math.max((existing && existing.dwellSeconds) || 0,
+                             payload.dwell_seconds || 0),
+      visitCount: ((existing && existing.visitCount) || 0) + 1,
+      source: 'extension'
+    });
+  } catch (error) {
+    // the on-device brain must never break capture itself
+    void error;
+  }
+}
+
+/** Forget every locally-remembered page belonging to a domain. */
+async function brainForgetDomain(domain) {
+  try {
+    await brain.ensureLoaded();
+    const needle = String(domain || '').toLowerCase();
+    if (!needle) return;
+    const victims = brain.pagesNow()
+      .filter((page) => (page.domain || '').toLowerCase().endsWith(needle))
+      .map((page) => page.pageId);
+    for (const pageId of victims) await brain.forgetPage(pageId);
+  } catch (error) {
+    void error;
+  }
 }
 
 async function recordLinkOnly(tabState, reason) {
@@ -525,10 +568,13 @@ async function handleMessage(message, sender) {
       const settings = await getSettings();
       const counts = await getCounts();
       const backend = await api.ping();
+      let brainStats = { pages: 0 };
+      try { brainStats = await brain.brainStats(); } catch (error) { void error; }
       return {
         ok: true,
         settings: publicSettings(settings),
         counts,
+        brain: brainStats,
         backend: backend.ok ? { ok: true, stats: backend.data.counts,
                                 engine: backend.data.engine, budgets: backend.data.budgets }
                             : { ok: false, error: backend.error },
@@ -576,10 +622,12 @@ async function handleMessage(message, sender) {
       let server = null;
       if (domain) {
         await forgetDomain(domain, message.reason || 'user request');
+        await brainForgetDomain(domain);
         try { server = await api.forget({ domain, reason: message.reason }); } catch (e) { server = { ok: false, error: String(e.message || e) }; }
       } else if (url) {
         await forgetUrl(url, message.reason || 'user request');
         await store.forgetCachedUrl(normalizeUrl(url));
+        await brain.forgetPage(url);
         const state = findStateByUrl(url);
         if (state) { state.captured = true; state.linkRecorded = true; }
         try { server = await api.forget({ url, reason: message.reason }); } catch (e) { server = { ok: false, error: String(e.message || e) }; }
@@ -605,8 +653,24 @@ async function handleMessage(message, sender) {
       return { ok: true, injected: true };
     }
 
-    case 'tb-query':
-      return await proxied(() => api.query(message.query, message.options || {}));
+    case 'tb-query': {
+      const settings = await getSettings();
+      try {
+        const out = await brain.answer(message.query, message.options || {}, settings);
+        return Object.assign({ ok: true, local: true }, out);
+      } catch (error) {
+        return { ok: false, error: String(error && error.message || error) };
+      }
+    }
+
+    case 'tb-web-permission': {
+      const patch = {};
+      if (message.allow === 'always') patch.webPermission = 'always';
+      else if (message.allow === 'never') patch.webPermission = 'never';
+      else patch.webPermission = 'ask';
+      await saveSettings(patch);
+      return { ok: true, webPermission: patch.webPermission };
+    }
 
     case 'tb-search':
       return await proxied(() => api.search(message.query, message.options || {}));
@@ -619,23 +683,73 @@ async function handleMessage(message, sender) {
         `/api/page-by-url?url=${encodeURIComponent(tab.url)}`));
     }
 
-    case 'tb-pages':
-      return await proxied(() => api.fetchPages(message.params || {}));
+    case 'tb-pages': {
+      await brain.ensureLoaded();
+      const params = message.params || {};
+      const rawSince = params.since;
+      const since = !rawSince ? 0
+        : (typeof rawSince === 'number' ? rawSince * 1000 : Date.parse(rawSince));
+      const limit = Number(params.limit || 40);
+      const rows = brain.pagesNow()
+        .filter((page) => page.text || true)
+        .filter((page) => !since || Date.parse(page.visitedAt) >= since)
+        .sort((a, b) => Date.parse(b.visitedAt) - Date.parse(a.visitedAt))
+        .slice(0, limit)
+        .map((page) => ({
+          page_id: page.pageId, url: page.url, title: page.title,
+          domain: page.domain, domain_label: page.domainLabel,
+          visited_at: page.visitedAt, visited_ago: timeAgo(page.visitedAt),
+          total_dwell_seconds: page.dwellSeconds || 0,
+          visit_count: page.visitCount || 1,
+          word_count: ((page.text || '').split(/\s+/).length),
+          mode: page.source === 'web_enrichment' ? 'assistant_fetched' : 'full',
+          assistant_fetched: page.source === 'web_enrichment'
+        }));
+      return { ok: true, local: true, pages: rows };
+    }
 
     case 'tb-interests':
-      return await proxied(() => api.fetchInterests());
+      await brain.ensureLoaded();
+      return { ok: true, local: true, interests: brain.interestsNow() };
 
-    case 'tb-digest':
-      return await proxied(() => api.fetchDigest(message.day));
+    case 'tb-digest': {
+      const settings = await getSettings();
+      return { ok: true, local: true,
+               digest: await brain.buildDigest(settings, { notify: false }) };
+    }
 
     case 'tb-insights':
       return await proxied(() => api.fetchInsights(message.unseen));
 
-    case 'tb-suggestions':
-      return await proxied(() => api.fetchSuggestions());
+    case 'tb-suggestions': {
+      await brain.ensureLoaded();
+      const interests = brain.interestsNow().slice(0, 5);
+      const pages = brain.pagesNow()
+        .sort((a, b) => Date.parse(b.visitedAt) - Date.parse(a.visitedAt));
+      const suggestions = interests.map((interest) => ({
+        title: `Go deeper on “${interest.topic}”`,
+        url: '', reason: `${interest.pages} page(s) in your memory — last touched ${interest.lastAgo}`,
+        kind: 'interest'
+      }));
+      for (const page of pages.slice(0, 3)) {
+        if (page.source === 'web_enrichment') continue;
+        suggestions.push({
+          title: page.title, url: page.url,
+          reason: `You read this ${timeAgo(page.visitedAt)} — ask me anything about it`,
+          kind: 'page'
+        });
+      }
+      return { ok: true, local: true, suggestions: suggestions.slice(0, 8) };
+    }
 
-    case 'tb-stats':
-      return await proxied(() => api.fetchStats());
+    case 'tb-stats': {
+      const settings = await getSettings();
+      const stats = await brain.brainStats();
+      const counts = await getCounts();
+      return { ok: true, local: true,
+               stats: Object.assign({}, counts, stats, {
+                 web_budget: await brain.webBudget(settings), engine: 'on-device' }) };
+    }
 
     case 'tb-enrich':
       return await proxied(() => api.runEnrichment(Boolean(message.daily)));
@@ -652,8 +766,15 @@ async function handleMessage(message, sender) {
     case 'tb-import':
       return await proxied(() => api.importDump(message.dump, message.embed !== false));
 
-    case 'tb-audit':
-      return await proxied(() => api.fetchAudit());
+    case 'tb-audit': {
+      const local = await brain.auditList();
+      let remote = [];
+      try {
+        const res = await api.fetchAudit();
+        remote = (res && res.audit) || [];
+      } catch (error) { void error; }
+      return { ok: true, audit: local.concat(remote) };
+    }
 
     case 'tb-engine':
       return await proxied(() => api.fetchEngine());
@@ -921,6 +1042,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === TICK_ALARM) await tick();
   else if (alarm.name === HEARTBEAT_ALARM) await heartbeat();
   else if (alarm.name === FLUSH_ALARM) await api.flushQueue(30);
+  else if (alarm.name === DAILY_ALARM) await brain.selfLearn(await getSettings());
 });
 
 chrome.storage.onChanged.addListener(async (changes, area) => {
@@ -962,6 +1084,14 @@ async function ensureAlarms() {
   }
   if (!names.has(FLUSH_ALARM)) {
     chrome.alarms.create(FLUSH_ALARM, { periodInMinutes: 2 });
+  }
+  if (!names.has(DAILY_ALARM)) {
+    // one self-training pass a day: refresh interests, build your recap, and
+    // (only if you chose "always allow web") read fresh material on your top topic
+    const next = new Date();
+    next.setHours(21, 0, 0, 0);
+    if (next.getTime() <= Date.now()) next.setDate(next.getDate() + 1);
+    chrome.alarms.create(DAILY_ALARM, { when: next.getTime(), periodInMinutes: 24 * 60 });
   }
 }
 

@@ -1,8 +1,10 @@
 /**
- * Twin-Brain popup — quick answers straight from the toolbar.
+ * Twin-Brain popup — your AI friend lives right here in the toolbar.
  *
- * Talks to the background worker only (never to the backend directly), so the
- * exclusion engine and the offline outbox stay in one place.
+ * Talks to the background worker only. The answers come from the ON-DEVICE
+ * brain (IndexedDB + local retrieval), so this works with no backend and no
+ * internet. The web is consulted only with your permission — the ask flow has
+ * its own card below the answer.
  */
 
 const $ = (selector) => document.querySelector(selector);
@@ -54,25 +56,17 @@ function el(tag, className, text) {
   return node;
 }
 
-function escapeHtml(text) {
-  return String(text == null ? '' : text).replace(/[&<>"']/g, (c) => (
-    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
-
-/** Render answer text, turning bare URLs and [n] markers into links. */
+/** Render plain answer text, turning bare URLs and [n] markers into links. */
 function renderAnswerText(container, text, citations) {
   container.textContent = '';
   const lines = String(text || '').split('\n');
   lines.forEach((line) => {
     const p = el('div');
-    let remaining = line;
-    // [1] style citation markers -> superscript links to the source chip
-    const parts = remaining.split(/(\[\d+\])/g);
-    parts.forEach((part) => {
+    line.split(/(\[\d+\])/g).forEach((part) => {
       const marker = part.match(/^\[(\d+)\]$/);
       if (marker) {
         const idx = Number(marker[1]);
-        const cite = (citations || []).find((c) => c.index === idx);
+        const cite = (citations || []).find((c) => (c.n || c.index) === idx);
         const link = el('a', 'cite-ref', `[${idx}]`);
         link.href = cite ? cite.url : '#';
         link.target = '_blank';
@@ -81,7 +75,6 @@ function renderAnswerText(container, text, citations) {
         p.appendChild(link);
         return;
       }
-      // bare URLs -> clickable
       part.split(/(https?:\/\/[^\s)\]]+)/g).forEach((chunk) => {
         if (/^https?:\/\//.test(chunk)) {
           const a = el('a', null, chunk.length > 58 ? `${chunk.slice(0, 55)}…` : chunk);
@@ -107,11 +100,14 @@ async function refreshStatus() {
   state.counts = response.counts;
   state.backend = response.backend;
 
+  const brainPages = (response.brain && response.brain.pages) || 0;
+  const backendOk = Boolean(response.backend && response.backend.ok);
   const dot = $('#status-dot');
-  dot.className = `dot ${response.backend && response.backend.ok ? 'dot-ok' : 'dot-bad'}`;
-  dot.title = response.backend && response.backend.ok
-    ? `backend online — ${response.backend.stats ? response.backend.stats.pages.toLocaleString() : 0} pages in memory`
-    : `backend offline (${response.backend ? response.backend.error : 'unknown'})`;
+  dot.className = `dot ${brainPages || backendOk ? 'dot-ok' : 'dot-bad'}`;
+  dot.title = brainPages
+    ? `on-device memory: ${brainPages} page(s) — works offline` +
+      (backendOk ? ' · backend mirror online' : '')
+    : 'memory is empty — browse a page for a few seconds and I will learn it';
 
   const pauseBtn = $('#btn-pause');
   const paused = Boolean(response.settings.globalPause || !response.settings.captureEnabled);
@@ -120,15 +116,18 @@ async function refreshStatus() {
   pauseBtn.title = paused ? 'Capture is PAUSED — click to resume' : 'Pause capture';
 
   const counts = response.counts || {};
-  $('#counts').textContent = counts.captured
-    ? `${counts.captured} remembered today` : 'nothing captured yet today';
-  $('#queue').textContent = counts.queued ? `${counts.queued} queued (backend down)` : '';
+  $('#counts').textContent = brainPages
+    ? `${brainPages} page(s) in your on-device brain` +
+      (counts.captured ? ` · ${counts.captured} captured today` : '')
+    : 'nothing remembered yet';
+  $('#queue').textContent = counts.queued ? `${counts.queued} queued for backend mirror` : '';
 
   const base = (response.settings.backendUrl || 'http://127.0.0.1:8765').replace(/\/+$/, '');
   $('#dashboard-link').href = `${base}/`;
-  $('#web-toggle').checked = Boolean(response.settings.webSearchEnabled &&
-                                     response.settings.useWebForAnswers);
-  $('#style').value = response.settings.answerStyle || 'concise';
+  $('#web-toggle').checked = String(response.settings.webPermission) === 'always';
+  $('#web-toggle').title = response.settings.webPermission === 'always'
+    ? 'Web lookups are always allowed'
+    : 'Check this (or pick "Always allow" below an answer) to let me search the web';
 }
 
 // ---------------------------------------------------------------------------
@@ -155,70 +154,170 @@ function addThinking() {
   return node;
 }
 
-function renderAnswer(node, data, query) {
-  node.className = `msg bot ${data.grounded ? 'grounded' : 'ungrounded'}${data.error ? ' error' : ''}`;
+function addMeta(node, data) {
+  const meta = el('div', 'meta');
+  meta.appendChild(el('span', `badge ${data.grounded ? 'ok' : 'warn'}`,
+    data.grounded ? 'from your memory' : 'not in memory'));
+  const retrieval = data.retrieval || {};
+  if (retrieval.engine) {
+    meta.appendChild(el('span', 'badge',
+      `${retrieval.count || 0} source(s) · ${retrieval.tookMs || 0}ms · on-device`));
+  }
+  if (data.usedWeb) meta.appendChild(el('span', 'badge warn', 'web used (with permission)'));
+  meta.appendChild(el('span', 'badge', 'offline-ready'));
+  node.appendChild(meta);
+}
+
+/** Sectioned "super explainer" rendering. */
+function renderExplanation(node, data, query) {
+  const ex = data.explanation || {};
+  node.className = `msg bot ${data.grounded ? 'grounded' : 'ungrounded'}`;
   node.textContent = '';
 
-  const text = el('div', 'text');
-  renderAnswerText(text, data.answer || data.error || 'No answer.', data.citations || []);
-  node.appendChild(text);
+  if (ex.opener) node.appendChild(el('div', 'opener', ex.opener));
 
-  const citations = data.citations || [];
+  if (ex.simple) {
+    const block = el('div', 'simple');
+    block.appendChild(el('div', 'label', 'In simple words'));
+    const p = el('div', 'text');
+    renderAnswerText(p, ex.simple, ex.citations);
+    block.appendChild(p);
+    node.appendChild(block);
+  }
+
+  if (data.adviceText) {
+    const block = el('div', 'advice');
+    renderAnswerText(block, data.adviceText, ex.citations);
+    node.appendChild(block);
+  }
+
+  if (ex.points && ex.points.length) {
+    const block = el('div', 'points');
+    block.appendChild(el('div', 'label', 'The details'));
+    const ul = el('ul');
+    ex.points.forEach((point) => ul.appendChild(el('li', null, point)));
+    block.appendChild(ul);
+    node.appendChild(block);
+  }
+
+  if (ex.words && ex.words.length) {
+    const block = el('div', 'words');
+    block.appendChild(el('div', 'label', 'Tricky words, translated'));
+    ex.words.forEach((word) => {
+      const chip = el('div', 'word-chip');
+      chip.appendChild(el('b', null, word.term));
+      chip.appendChild(el('span', null, ` = ${word.plain}`));
+      block.appendChild(chip);
+    });
+    node.appendChild(block);
+  }
+
+  if (ex.webNotes && ex.webNotes.length) {
+    const block = el('div', 'webnotes');
+    block.appendChild(el('div', 'label', 'From the web (you allowed this)'));
+    const ul = el('ul');
+    ex.webNotes.forEach((note) => {
+      const li = el('li', null, note.text);
+      li.appendChild(el('sup', 'cite-ref', `[${note.n}]`));
+      ul.appendChild(li);
+    });
+    block.appendChild(ul);
+    node.appendChild(block);
+  }
+
+  if (ex.connect) node.appendChild(el('div', 'connect', ex.connect));
+  if (ex.webDeniedLine) node.appendChild(el('div', 'connect', ex.webDeniedLine));
+
+  const citations = ex.citations || data.citations || [];
   if (citations.length) {
     const box = el('div', 'cites');
-    citations.slice(0, 6).forEach((cite) => {
+    box.appendChild(el('div', 'label', 'Where this comes from'));
+    citations.slice(0, 8).forEach((cite) => {
       const row = el('div', 'cite');
-      row.appendChild(el('span', 'idx', String(cite.index)));
+      row.appendChild(el('span', 'idx', String(cite.n || cite.index)));
       const main = el('div', 'row');
       const a = el('a', null, cite.title || cite.url);
       a.href = cite.url; a.target = '_blank'; a.rel = 'noreferrer';
       main.appendChild(a);
-      const site = el('span', 'site',
-        `${(cite.domain || '').replace(/^www\./, '')} · visited ${cite.visited_ago || '—'}` +
-        (cite.dwell_seconds ? ` · ${Math.round(cite.dwell_seconds / 60)}m on page` : ''));
-      main.appendChild(site);
+      const kind = cite.kind === 'web' ? 'web' : 'memory';
+      main.appendChild(el('span', `badge ${kind === 'web' ? 'warn' : 'ok'}`, kind));
+      main.appendChild(el('span', 'site',
+        `${(cite.domain || '').replace(/^www\./, '')} · ${cite.when || 'visited —'}` +
+        (cite.dwell ? ` · ${Math.round(cite.dwell / 60)}m on page` : '')));
       row.appendChild(main);
       box.appendChild(row);
     });
     node.appendChild(box);
   }
 
-  const meta = el('div', 'meta');
-  const groundedBadge = el('span', `badge ${data.grounded ? 'ok' : 'warn'}`,
-    data.grounded ? 'grounded' : 'no match in memory');
-  meta.appendChild(groundedBadge);
-  if (data.confidence) meta.appendChild(el('span', 'badge', `confidence: ${data.confidence}`));
-  const retrieval = data.retrieval || {};
-  if (retrieval.engine) {
-    meta.appendChild(el('span', 'badge',
-      `${retrieval.count || 0} sources · ${retrieval.engine.took_ms}ms · ${retrieval.engine.embedder || ''}`));
+  if (ex.further && ex.further.length) {
+    const box = el('div', 'further');
+    box.appendChild(el('div', 'label', 'Related reading (links at the end, as you like it)'));
+    ex.further.forEach((item) => {
+      const row = el('div', 'further-row');
+      const a = el('a', null, item.title);
+      a.href = item.url; a.target = '_blank'; a.rel = 'noreferrer';
+      row.appendChild(a);
+      row.appendChild(el('span', 'site', item.why || ''));
+      box.appendChild(row);
+    });
+    node.appendChild(box);
   }
-  if (retrieval.time_label) meta.appendChild(el('span', 'badge', `window: ${retrieval.time_label}`));
-  if (data.used_web) meta.appendChild(el('span', 'badge warn', 'used web search'));
-  meta.appendChild(el('span', 'badge', `${data.latency_ms || 0}ms total`));
-  if (data.provider) meta.appendChild(el('span', 'badge', data.provider));
-  node.appendChild(meta);
 
-  // offline / thin-memory helper
-  if (!data.grounded && !citations.length) {
-    const hint = el('div', 'meta');
-    const btn = el('button', 'chip', 'widen the search');
-    btn.addEventListener('click', () => ask(`${query} (search all time)`, { widen: true }));
-    hint.appendChild(btn);
-    node.appendChild(hint);
+  if (ex.honesty) node.appendChild(el('div', 'honesty', ex.honesty));
+  if (ex.closing) node.appendChild(el('div', 'closing', ex.closing));
+
+  if (ex.followups && ex.followups.length) {
+    const chips = el('div', 'followups');
+    ex.followups.forEach((text) => {
+      const chip = el('button', 'chip', text);
+      chip.type = 'button';
+      chip.addEventListener('click', () => ask(text, { silent: true }));
+      chips.appendChild(chip);
+    });
+    node.appendChild(chips);
   }
+
+  addMeta(node, data);
+
+  // --- permission card: the AI asks before touching the internet ------------
+  if (data.mode === 'needs_permission') {
+    const card = el('div', 'perm-card');
+    card.appendChild(el('div', 'perm-title', 'May I check the web for this?'));
+    card.appendChild(el('div', 'perm-sub',
+      'Nothing is in your memory about it. I will search, read the top result and explain it — only with your okay.'));
+    const actions = el('div', 'perm-actions');
+    const once = el('button', 'chip primary', 'Allow once');
+    once.addEventListener('click', () => ask(query, { useWeb: true, silent: true }));
+    const always = el('button', 'chip', 'Always allow web');
+    always.addEventListener('click', async () => {
+      await send('tb-web-permission', { allow: 'always' });
+      $('#web-toggle').checked = true;
+      toast('Web lookups are now always allowed. You can change this in Options.');
+      ask(query, { useWeb: true, silent: true });
+    });
+    const no = el('button', 'chip', 'Not now');
+    no.addEventListener('click', () => ask(query, { denied: true, silent: true }));
+    actions.appendChild(once);
+    actions.appendChild(always);
+    actions.appendChild(no);
+    card.appendChild(actions);
+    node.appendChild(card);
+  }
+
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 function showSources(data) {
-  const retrieval = data.retrieval || {};
-  const results = retrieval.results || [];
-  if (!results.length) { sourcesBar.classList.add('hidden'); return; }
+  const ex = data.explanation || {};
+  const citations = ex.citations || data.citations || [];
+  if (!citations.length) { sourcesBar.classList.add('hidden'); return; }
   sourcesBar.textContent = '';
-  sourcesBar.appendChild(el('span', null, `${results.length} retrieved:`));
-  results.slice(0, 3).forEach((item) => {
-    const chip = el('span', 'badge', `${item.title.slice(0, 28)}${item.title.length > 28 ? '…' : ''}`);
-    chip.title = `${item.title}\n${item.domain}\nrelevance ${(item.scores.relevance * 100).toFixed(0)}%`;
+  sourcesBar.appendChild(el('span', null, `${citations.length} source(s):`));
+  citations.slice(0, 3).forEach((cite) => {
+    const title = cite.title || cite.url;
+    const chip = el('span', 'badge', `${title.slice(0, 28)}${title.length > 28 ? '…' : ''}`);
+    chip.title = `${title}\n${cite.domain || ''}\n${cite.kind === 'web' ? 'web (permitted)' : 'your memory'}`;
     sourcesBar.appendChild(chip);
   });
   sourcesBar.classList.remove('hidden');
@@ -229,18 +328,15 @@ async function ask(query, options = {}) {
   if (!text || state.busy) return;
   state.busy = true;
   sendEl.disabled = true;
-  inputEl.value = '';
-  autoGrow();
-  addUserMessage(text);
+  if (!options.silent) { inputEl.value = ''; autoGrow(); addUserMessage(text); }
   const thinking = addThinking();
 
-  const useWeb = options.useWeb !== undefined ? options.useWeb : $('#web-toggle').checked;
   const response = await send('tb-query', {
     query: text,
     options: {
-      style: $('#style').value,
-      use_web: useWeb,
-      top_k: options.widen ? 12 : undefined
+      useWeb: options.useWeb === true || $('#web-toggle').checked,
+      denied: options.denied === true,
+      topK: options.widen ? 12 : 8
     }
   });
 
@@ -251,12 +347,11 @@ async function ask(query, options = {}) {
   if (!response.ok) {
     node.className = 'msg bot error';
     node.appendChild(el('div', 'text',
-      response.offline
-        ? 'The Twin-Brain backend is not reachable. Your captures are queued locally and will be stored as soon as it is running again.\n\nStart it with:  ./run.sh'
-        : `Error: ${response.error}`));
+      `The on-device brain hit a problem: ${response.error}\n\n` +
+      'Your memory itself is safe — reload the extension from chrome://extensions if this repeats.'));
     sourcesBar.classList.add('hidden');
   } else {
-    renderAnswer(node, response, text);
+    renderExplanation(node, response, text);
     showSources(response);
   }
   state.busy = false;
@@ -267,14 +362,20 @@ async function ask(query, options = {}) {
 
 async function loadSuggestions() {
   const response = await send('tb-suggestions');
-  const items = (response.ok && response.suggestions) ? response.suggestions : [
-    'What did I read today?', 'What are my top interests?', 'Summarise my day'
-  ];
   suggestionsEl.textContent = '';
-  items.slice(0, 5).forEach((text) => {
-    const chip = el('button', 'chip', text);
+  const items = (response.ok && response.suggestions) ? response.suggestions : [];
+  const chips = items.length
+    ? items.map((item) => (typeof item === 'string' ? { title: item } : item))
+    : [
+      { title: 'What did I read today?' },
+      { title: 'What are my top interests?' },
+      { title: 'Summarise my day' }
+    ];
+  chips.slice(0, 6).forEach((item) => {
+    const chip = el('button', 'chip', item.title);
     chip.type = 'button';
-    chip.addEventListener('click', () => ask(text));
+    if (item.reason) chip.title = item.reason;
+    chip.addEventListener('click', () => ask(item.title));
     suggestionsEl.appendChild(chip);
   });
 }
@@ -288,14 +389,14 @@ async function loadToday() {
   listEl.textContent = '';
   listEl.appendChild(el('div', 'muted', 'loading…'));
   const since = new Date(); since.setHours(0, 0, 0, 0);
-  const response = await send('tb-pages', { params: { limit: 40, since: since.getTime() / 1000 } });
+  const response = await send('tb-pages', { params: { limit: 40, since: since.toISOString() } });
   listEl.textContent = '';
   const pages = (response.ok && response.pages) ? response.pages : [];
   $('#today-count').textContent = pages.length
-    ? `${pages.length} page(s) today` : 'nothing captured today';
+    ? `${pages.length} page(s) today — stored on-device` : 'nothing captured today';
   if (!pages.length) {
     listEl.appendChild(el('div', 'muted',
-      response.offline ? 'Backend offline — showing nothing.' : 'No pages yet today.'));
+      'No pages yet today. Browse something for a few seconds and it will appear here.'));
     return;
   }
   pages.forEach((page) => {
@@ -309,7 +410,7 @@ async function loadToday() {
       `${page.domain_label || page.domain} · ${page.visited_ago || ''}` +
       (minutes ? ` · ${minutes}m` : '') +
       (page.visit_count > 1 ? ` · ${page.visit_count} visits` : '') +
-      (page.assistant_fetched ? ' · assistant-fetched' : '')));
+      (page.mode === 'assistant_fetched' ? ' · assistant-fetched' : '')));
     row.appendChild(main);
     const actions = el('div', 'actions');
     const askBtn = el('button', 'mini ask', 'ask');
@@ -319,11 +420,11 @@ async function loadToday() {
       ask(`What did I read on "${(page.title || '').slice(0, 60)}"?`);
     });
     const forgetBtn = el('button', 'mini', 'forget');
-    forgetBtn.title = 'Delete this page from memory and never capture it again';
+    forgetBtn.title = 'Delete this page from on-device memory and never capture it again';
     forgetBtn.addEventListener('click', async () => {
       const result = await send('tb-forget', { url: page.url, reason: 'popup' });
       row.remove();
-      toast(result.ok ? 'Forgotten — deleted and blocked from re-capture.' : 'Forget failed', !result.ok);
+      toast(result.ok ? 'Forgotten — deleted from this browser.' : 'Forget failed', !result.ok);
       refreshStatus();
     });
     actions.appendChild(askBtn);
@@ -350,7 +451,6 @@ async function loadSites(filter = '') {
   const response = await send('tb-domains', { query: filter });
   listEl.textContent = '';
 
-  // merge the server's view (what is stored) with the extension's local view
   const byDomain = new Map();
   (response.domains || []).forEach((row) => {
     const key = row.registrable || row.domain;
@@ -441,6 +541,15 @@ function init() {
   inputEl.addEventListener('input', autoGrow);
   inputEl.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); ask(); }
+  });
+
+  $('#web-toggle').addEventListener('change', async (event) => {
+    const allow = event.target.checked ? 'always' : 'ask';
+    await send('tb-web-permission', { allow });
+    toast(event.target.checked
+      ? 'Web lookups always allowed — I still audit every search.'
+      : 'Back to asking you first before any web lookup.');
+    refreshStatus();
   });
 
   $('#btn-pause').addEventListener('click', async () => {

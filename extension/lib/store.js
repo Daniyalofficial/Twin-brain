@@ -8,10 +8,16 @@
  */
 
 const DB_NAME = 'twinbrain';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const QUEUE = 'queue';
 const PAGES = 'pages';
 const META = 'meta';
+// v2: the on-device brain. Your memory now lives in the extension itself and
+// works with no backend and no internet; the backend became an optional mirror.
+const CHUNKS = 'chunks';
+const INTERESTS = 'interests';
+const CONVS = 'convs';
+const AUDIT = 'audit';
 
 let dbPromise = null;
 
@@ -36,6 +42,21 @@ function openDb() {
       }
       if (!db.objectStoreNames.contains(META)) {
         db.createObjectStore(META, { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains(CHUNKS)) {
+        const store = db.createObjectStore(CHUNKS, { keyPath: 'id' });
+        store.createIndex('pageId', 'pageId', { unique: false });
+      }
+      if (!db.objectStoreNames.contains(INTERESTS)) {
+        db.createObjectStore(INTERESTS, { keyPath: 'topic' });
+      }
+      if (!db.objectStoreNames.contains(CONVS)) {
+        const store = db.createObjectStore(CONVS, { keyPath: 'id', autoIncrement: true });
+        store.createIndex('at', 'at', { unique: false });
+      }
+      if (!db.objectStoreNames.contains(AUDIT)) {
+        const store = db.createObjectStore(AUDIT, { keyPath: 'id', autoIncrement: true });
+        store.createIndex('at', 'at', { unique: false });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -169,5 +190,95 @@ export async function getMeta(key, fallback = null) {
     const request = db.transaction(META, 'readonly').objectStore(META).get(key);
     request.onsuccess = () => resolve(request.result ? request.result.value : fallback);
     request.onerror = () => resolve(fallback);
+  }));
+}
+
+// --- on-device brain stores -------------------------------------------------
+
+export async function putChunks(chunks) {
+  return openDb().then((db) => new Promise((resolve, reject) => {
+    const transaction = db.transaction(CHUNKS, 'readwrite');
+    const store = transaction.objectStore(CHUNKS);
+    chunks.forEach((chunk) => store.put(chunk));
+    transaction.oncomplete = () => resolve(chunks.length);
+    transaction.onerror = () => reject(transaction.error);
+  }));
+}
+
+export async function getAllChunks() {
+  return openDb().then((db) => new Promise((resolve, reject) => {
+    const request = db.transaction(CHUNKS, 'readonly').objectStore(CHUNKS).getAll();
+    request.onsuccess = () => resolve(request.result || []);
+    request.onerror = () => reject(request.error);
+  }));
+}
+
+export async function deleteChunksByPage(pageId) {
+  return openDb().then((db) => new Promise((resolve, reject) => {
+    const transaction = db.transaction(CHUNKS, 'readwrite');
+    const store = transaction.objectStore(CHUNKS);
+    const index = store.index('pageId');
+    const request = index.openCursor(IDBKeyRange.only(pageId));
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (cursor) { cursor.delete(); cursor.continue(); }
+    };
+    transaction.oncomplete = () => resolve(true);
+    transaction.onerror = () => reject(transaction.error);
+  }));
+}
+
+export async function putInterests(rows) {
+  return openDb().then((db) => new Promise((resolve, reject) => {
+    const transaction = db.transaction(INTERESTS, 'readwrite');
+    const store = transaction.objectStore(INTERESTS);
+    store.clear();
+    rows.forEach((row) => store.put(row));
+    transaction.oncomplete = () => resolve(rows.length);
+    transaction.onerror = () => reject(transaction.error);
+  }));
+}
+
+export async function getInterests() {
+  return openDb().then((db) => new Promise((resolve, reject) => {
+    const request = db.transaction(INTERESTS, 'readonly').objectStore(INTERESTS).getAll();
+    request.onsuccess = () => resolve(request.result || []);
+    request.onerror = () => reject(request.error);
+  }));
+}
+
+export async function putConversation(entry) {
+  return tx(CONVS, 'readwrite', (store) => store.add(Object.assign({ at: Date.now() }, entry)));
+}
+
+export async function recentConversations(limit = 6) {
+  return openDb().then((db) => new Promise((resolve, reject) => {
+    const out = [];
+    const request = db.transaction(CONVS, 'readonly').objectStore(CONVS)
+      .index('at').openCursor(null, 'prev');
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (cursor && out.length < limit) { out.push(cursor.value); cursor.continue(); }
+      else resolve(out.reverse());
+    };
+    request.onerror = () => reject(request.error);
+  }));
+}
+
+export async function addAudit(entry) {
+  return tx(AUDIT, 'readwrite', (store) => store.add(Object.assign({ at: Date.now() }, entry)));
+}
+
+export async function recentAudit(limit = 60) {
+  return openDb().then((db) => new Promise((resolve, reject) => {
+    const out = [];
+    const request = db.transaction(AUDIT, 'readonly').objectStore(AUDIT)
+      .index('at').openCursor(null, 'prev');
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (cursor && out.length < limit) { out.push(cursor.value); cursor.continue(); }
+      else resolve(out);
+    };
+    request.onerror = () => reject(request.error);
   }));
 }
