@@ -56,7 +56,8 @@ export function extractFacts(text) {
   for (const pattern of FACT_PATTERNS) {
     const match = pattern.re.exec(s);
     if (!match) continue;
-    let value = match[1].trim().replace(/\s+(?:too|also|ok|okay|please|bro|man|yaar)$/i, '');
+    let value = match[1].trim()
+      .replace(/\s+(?:too|also|ok|okay|please|bro|man|yaar|now|currently|these days|nowadays|lately|really)$/i, '');
     if (!value || value.length < 2 || FACT_STOP_PREFIX.test(value)) continue;
     if (pattern.kind === 'name') value = value[0].toUpperCase() + value.slice(1).toLowerCase();
     out.push({ kind: pattern.kind, value });

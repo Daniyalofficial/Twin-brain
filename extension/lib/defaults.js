@@ -12,6 +12,17 @@ export const DEFAULT_SETTINGS = {
   talkativeness: 'friendly',     // 'friendly' | 'quiet'
   userName: '',                   // so your AI friend can greet you by name
   webDeepRead: true,             // fetch + store the top web result, with permission
+  researchHops: 3,               // multi-hop research: refine + search again until sufficient
+
+  // --- real neural engine (optional, local-first) ---
+  neuralEnabled: true,            // use a real LLM when one is reachable
+  neuralBackend: 'auto',          // 'auto' | 'ollama' | 'openai' | 'off'
+  ollamaUrl: 'http://127.0.0.1:11434',
+  ollamaModel: 'auto',            // 'auto' prefers your own "twinbrain" Modelfile
+  openaiUrl: '',                  // any OpenAI-compatible server (LM Studio, llama.cpp, vLLM…)
+  openaiKey: '',                  // optional; stays in this browser
+  openaiModel: '',
+  sendMemoryToCloud: false,       // PRIVACY: memory slices only go to LOCAL models unless true
   autoEnrich: true,               // nightly self-training, only when webPermission=always
   // --- connection ---
   backendUrl: 'http://127.0.0.1:8765',

@@ -232,6 +232,67 @@
     <p class="note" id="brain-stats">Loading on-device stats…</p>
   </section>
 
+  <!-- ================= REAL NEURAL ENGINE ================= -->
+  <section id="neural" class="card">
+    <h2>Real model engine (Ollama &amp; friends)</h2>
+    <p class="note">Twin-Brain speaks through a <strong>real local LLM</strong> when one is
+    running — fully offline, fully private. Install <a href="https://ollama.com" target="_blank" rel="noreferrer">Ollama</a>,
+    run <code>ollama pull llama3.2</code>, and the extension finds it automatically.
+    No model running? The on-device persona brain keeps everything working.</p>
+    <label class="switch-row">
+      <span><strong>Use a real model when available</strong><small>Detected automatically every ~45s; answers stream token-by-token.</small></span>
+      <input type="checkbox" id="set-neuralEnabled">
+    </label>
+    <div class="field-grid">
+      <label class="field">
+        <span>Backend</span>
+        <select id="set-neuralBackend">
+          <option value="auto">auto-detect (Ollama → OpenAI-compatible)</option>
+          <option value="ollama">Ollama only</option>
+          <option value="openai">OpenAI-compatible only</option>
+          <option value="off">off — on-device persona only</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Ollama URL</span>
+        <input type="text" id="set-ollamaUrl" placeholder="http://127.0.0.1:11434">
+      </label>
+      <label class="field">
+        <span>Ollama model</span>
+        <input type="text" id="set-ollamaModel" placeholder="auto">
+        <small>"auto" prefers your exported <strong>twinbrain</strong> Modelfile, then llama3.2 / qwen2.5 / gemma2 / phi3…</small>
+      </label>
+      <label class="field">
+        <span>OpenAI-compatible URL</span>
+        <input type="text" id="set-openaiUrl" placeholder="http://127.0.0.1:1234/v1 (LM Studio) or cloud">
+      </label>
+      <label class="field">
+        <span>API key (optional)</span>
+        <input type="password" id="set-openaiKey" placeholder="stays in this browser">
+      </label>
+      <label class="field">
+        <span>Model name (optional)</span>
+        <input type="text" id="set-openaiModel" placeholder="first available">
+      </label>
+    </div>
+    <label class="switch-row">
+      <span><strong>Allow cloud models to see my memory</strong><small>OFF (default) = your reading never leaves the machine: only LOCAL servers get memory slices. Cloud models still chat, but without your library.</small></span>
+      <input type="checkbox" id="set-sendMemoryToCloud">
+    </label>
+    <div class="field-grid">
+      <label class="field">
+        <span>Research hops per question</span>
+        <input type="number" id="set-researchHops" min="1" max="6" step="1">
+        <small>When one web search is not enough, the AI refines and searches again (within the daily budget, with your permission).</small>
+      </label>
+    </div>
+    <div class="button-row">
+      <button id="btn-neural-test" class="btn">Test connection</button>
+      <button id="btn-modelfile" class="btn">Export my twin (Ollama Modelfile)</button>
+    </div>
+    <p class="note" id="neural-status">Not tested yet.</p>
+  </section>
+
   <section id="answers" class="card">
     <h2>Answers</h2>
     <label class="switch-row">

@@ -238,3 +238,13 @@ ul.tight li { margin-bottom: 4px; }
   .site-row { grid-template-columns: 1fr auto; }
   .site-row .badge-src { display: none; }
 }
+
+/* neural card buttons */
+.button-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 4px; }
+.button-row .btn {
+  background: #1d2a24; color: var(--accent, #6ee7b7);
+  border: 1px solid #2f6f5a; border-radius: 8px;
+  padding: 7px 12px; font-size: 13px; cursor: pointer; font-weight: 600;
+}
+.button-row .btn:hover { background: #26382e; }
+.button-row .btn:disabled { opacity: .5; cursor: wait; }

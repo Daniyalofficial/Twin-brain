@@ -13,14 +13,24 @@
 import * as store from '../store.js';
 import { embed, embedQuery } from './embed.js';
 import { LexicalIndex } from './lexical.js';
-import { retrieve, relatedPages } from './retrieve.js';
+import { retrieve, relatedPages, quoteFloor } from './retrieve.js';
 import { explain, advice, smalltalk } from './explain.js';
 import { parseQuery } from './understand.js';
 import {
   displayName, greeting, thinkingNotes, respondToCompliment, respondToThanks,
-  questionBack, empathyLine, weaveFacts, hedgeLine, farewell,
+  questionBack, empathyLine, weaveFacts, hedgeLine, farewell, storyResponse,
 } from './persona.js';
 import { directAnswer } from './direct.js';
+import { detectProvider, streamChat, promptAllowsMemory } from './neural.js';
+import {
+  buildGrowthPack, growthPackText, rollingSummary, makeStudyPlan, buildModelfile,
+} from './growth.js';
+import { detectEmotion, tonePlan, storyArc, humorLine } from './emotion.js';
+import {
+  screenInput, redact, screenLinks, PROFESSIONAL_DISCLAIMER, policyPromptLines,
+  CRISIS_RESPONSE,
+} from './policy.js';
+import { researchLoop } from './research.js';
 import { searchWeb, fetchPageText } from './websearch.js';
 import {
   contentWords, queryTerms, splitSentences, stem, humanTime, fmtDuration, truncate,
@@ -33,6 +43,7 @@ const state = {
   interests: [],
   loaded: false,
   loading: null,
+  providerCache: { at: 0, provider: null },
 };
 
 // ---------------------------------------------------------------------------
@@ -180,6 +191,80 @@ export async function learnInterests(page) {
 }
 
 // ---------------------------------------------------------------------------
+// neural provider (real local LLMs) + growth
+// ---------------------------------------------------------------------------
+
+const PROVIDER_TTL_MS = 45000;
+
+export async function getProvider(settings, force = false) {
+  const now = Date.now();
+  if (!force && state.providerCache.provider !== null &&
+      now - state.providerCache.at < PROVIDER_TTL_MS) {
+    return state.providerCache.provider;
+  }
+  if (!force && state.providerCache.provider === null &&
+      now - state.providerCache.at < 15000) {
+    return null;    // negative caching: do not probe Ollama on every message
+  }
+  let provider = null;
+  try { provider = await detectProvider(settings); } catch (error) { void error; }
+  state.providerCache = { at: now, provider };
+  return provider;
+}
+
+export async function neuralStatus(settings) {
+  const provider = await getProvider(settings, true);
+  return provider
+    ? { connected: true, label: provider.label, model: provider.model, kind: provider.kind }
+    : { connected: false, label: 'on-device persona engine (no local model detected)' };
+}
+
+export async function getGrowthPack(rebuild = false) {
+  await ensureLoaded();
+  if (!rebuild) {
+    const cached = await store.getMeta('growthPack');
+    if (cached) return cached;
+  }
+  const facts = await loadFacts();
+  const conversations = await store.recentConversations(60);
+  const pack = buildGrowthPack({
+    facts, interests: state.interests,
+    pages: pagesNow(), conversations,
+  });
+  await store.setMeta('growthPack', pack);
+  return pack;
+}
+
+export async function getModelfile(settings = {}) {
+  const pack = await getGrowthPack(true);
+  const base = settings.ollamaModel && settings.ollamaModel !== 'auto'
+    ? String(settings.ollamaModel).split(':')[0]
+    : 'llama3.2';
+  return buildModelfile(pack, { base });
+}
+
+export async function getStudyPlan(topic) {
+  const key = `studyPlan:${String(topic || '').toLowerCase().trim()}`;
+  return store.getMeta(key);
+}
+
+async function maybeStudyPlan(parsed, facts) {
+  // "I am learning X" (or a 3+ page interest with no plan) starts a shared plan
+  const learning = parsed.factStatements.find((fact) => fact.kind === 'learning');
+  if (learning) {
+    const topic = learning.value.toLowerCase().replace(/\s+/g, ' ').trim();
+    const existing = await getStudyPlan(topic);
+    if (!existing) {
+      const plan = makeStudyPlan(topic, { pages: pagesNow(), interests: state.interests });
+      await store.setMeta(`studyPlan:${topic}`, plan);
+      return plan;
+    }
+    return existing;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // answering
 // ---------------------------------------------------------------------------
 
@@ -209,6 +294,18 @@ export async function answer(query, options = {}, settings = {}, hooks = {}) {
   const parsed = parseQuery(query, { history, interests: state.interests });
   const name = displayName(facts, settings);
 
+  // --- policy gate: crisis and harm are handled before anything else --------
+  const screened = screenInput(parsed.raw);
+  if (screened && (screened.action === 'crisis' || screened.action === 'refuse')) {
+    await store.putConversation({ query: '[screened by policy]', mode: 'policy',
+                                  type: 'policy', topic: '', answer: '' });
+    return { mode: 'policy', text: screened.response, grounded: true, citations: [],
+             policyAction: screened.action, conversation: { name } };
+  }
+  const professional = Boolean(screened && screened.action === 'professional');
+  const emotion = detectEmotion(parsed.raw);
+  const tone = tonePlan(emotion);
+
   // --- the AI learns what you tell it about yourself, in real time ---------
   let factConfirm = null;
   if (parsed.factStatements.length) {
@@ -223,7 +320,12 @@ export async function answer(query, options = {}, settings = {}, hooks = {}) {
       !factValueWords.has(w) && !FACT_WORDS.has(w));
     if (!parsed.isQuestion && residual.length <= 1) {
       // a pure "remember this" moment — answer like a friend, don't retrieve
-      const text = `${factConfirm}${talkative ? `\n\n${questionBack(facts, state.interests, parsed)}` : ''}`;
+      const plan = await maybeStudyPlan(parsed, facts);
+      let text = factConfirm;
+      if (plan) {
+        text += `\n\nI've started a study plan for ${plan.topic} — step 1: ${plan.milestones[0].text} Let's learn together. 📚`;
+      }
+      if (talkative) text += `\n\n${questionBack(facts, state.interests, parsed)}`;
       await store.putConversation({ query: parsed.raw, mode: 'fact', type: 'fact',
                                     topic: parsed.topicWords.join(' '), answer: text });
       return { mode: 'chat', text, grounded: true, citations: [], followups: [],
@@ -244,6 +346,7 @@ export async function answer(query, options = {}, settings = {}, hooks = {}) {
     } else {
       text = smalltalk(parsed.raw, stats, state.interests);
     }
+    if (emotion.primary === 'joy' && talkative) text += `\n\n${humorLine(parsed.raw)}`;
     if (talkative && !parsed.compliment) text += `\n\n${questionBack(facts, state.interests, parsed)}`;
     await store.putConversation({ query: parsed.raw, mode: 'smalltalk', type: 'smalltalk',
                                   topic: '', answer: text });
@@ -274,6 +377,18 @@ export async function answer(query, options = {}, settings = {}, hooks = {}) {
              conversation: { name } };
   }
 
+  // --- neural provider (real local LLM) + story detection -------------------
+  const provider = await getProvider(settings);
+  const storyMode = emotion.isStory && !parsed.isQuestion && parsed.type !== 'web';
+  if (storyMode && !provider) {
+    const arc = storyArc(parsed.raw);
+    const text = storyResponse(arc, name, facts, tone);
+    await store.putConversation({ query: parsed.raw, mode: 'story', type: 'story',
+                                  topic: parsed.topicWords.join(' '), answer: truncate(text, 300) });
+    return { mode: 'chat', text, grounded: true, citations: [],
+             conversation: { name, emotion: emotion.primary, tone: tone.mood } };
+  }
+
   // --- real-time retrieval with thinking-out-loud --------------------------
   const notes = thinkingNotes(parsed, stats);
   note(notes[0]);
@@ -291,17 +406,34 @@ export async function answer(query, options = {}, settings = {}, hooks = {}) {
   let needsPermission = false;
 
   const explicitWeb = parsed.type === 'web' || options.useWeb === true;
-  if ((!result.grounded && !memoryOnly) || explicitWeb) {
+  if ((!result.grounded && !memoryOnly && !storyMode) || explicitWeb) {
     if (permission === 'never' || webDenied) {
       webDenied = true;
     } else if (permission === 'always' || explicitWeb || options.useWeb === true) {
-      note('you said okay — searching the web live…');
-      const web = await runWebSearch(effective, settings);
-      webResults = web.results || [];
+      note('you said okay — starting live research…');
+      const budget = await webBudget(settings);
+      let remaining = budget.remaining;
+      const research = await researchLoop(effective, {
+        search: (q) => searchWeb(q),
+        fetchPage: async (result) => {
+          const page = await fetchPageText(result.url, 16000);
+          return page;
+        },
+        audit: (entry) => store.addAudit(entry),
+        budgetRemaining: () => remaining,
+        consumeBudget: async () => { remaining -= 1; await bumpWebBudget(); },
+      }, {
+        maxHops: Math.max(1, Number(settings.researchHops || 3)),
+        interests: state.interests,
+        deepRead: settings.webDeepRead !== false,
+        note,
+      });
+      webResults = research.results || [];
       usedWeb = webResults.length > 0;
       if (usedWeb && settings.webDeepRead !== false) {
-        note(`reading “${(webResults[0].title || '').slice(0, 50)}” in full…`);
-        await deepReadTopResult(webResults[0], effective);
+        for (const deep of webResults.filter((item) => item.deepText).slice(0, 2)) {
+          await ingestWebPage(deep, effective);
+        }
       }
     } else {
       needsPermission = true;
@@ -320,6 +452,8 @@ export async function answer(query, options = {}, settings = {}, hooks = {}) {
     weave: weaveFacts(facts, parsed.topicWords),
     factConfirm,
     thinking: notes,
+    emotion: emotion.primary,
+    tone: tone.mood,
   };
 
   if (needsPermission) {
@@ -334,6 +468,53 @@ export async function answer(query, options = {}, settings = {}, hooks = {}) {
       conversation: conversationBase,
       grounded: Boolean(direct && direct.found), citations: [],
     };
+  }
+
+  // --- NEURAL PATH: a real local model, grounded in your memory -------------
+  if (provider) {
+    const pack = await getGrowthPack();
+    const summary = rollingSummary(history);
+    const messages = buildNeuralMessages({
+      parsed, emotion, tone, result: finalResult, webResults, provider, settings,
+      pack, summary, history, storyMode, professional, name,
+    });
+    let text = '';
+    try {
+      for await (const token of streamChat(provider, messages, { key: settings.openaiKey })) {
+        text += token;
+        if (hooks.token) { try { hooks.token(token); } catch (error) { void error; } }
+      }
+    } catch (error) {
+      text = '';
+      note('the local model hiccuped — answering with my on-device voice…');
+    }
+    if (text.trim().length > 3) {
+      const allowedUrls = finalResult.matches.map((match) => match.url)
+        .concat(webResults.map((item) => item.url));
+      text = screenLinks(redact(text), allowedUrls);
+      if (professional) text += `\n\n${PROFESSIONAL_DISCLAIMER}`;
+      const grounded = finalResult.grounded || usedWeb || storyMode;
+      if (!grounded) {
+        text = `Honest note: this wasn't in your memory, so treat this as general knowledge, not your history.\n\n${text}`;
+      }
+      const citations = buildNeuralCitations(finalResult, webResults);
+      await store.putConversation({
+        query: parsed.raw, mode: 'neural', type: parsed.type, grounded,
+        topic: parsed.topicWords.join(' '), answer: truncate(text, 300),
+      });
+      if (talkative) conversationBase.questionBack = questionBack(facts, state.interests, parsed);
+      return {
+        mode: 'neural', text, citations, grounded, usedWeb, webDenied,
+        providerLabel: provider.label, anaphora: parsed.anaphora,
+        conversation: conversationBase,
+        retrieval: {
+          count: finalResult.matches.length, tookMs: finalResult.tookMs,
+          bestRelevance: finalResult.bestRelevance, evidence: finalResult.evidence,
+          engine: `neural (${provider.label}) + on-device retrieval`,
+        },
+      };
+    }
+    // model failed or answered nothing -> fall through to the persona engine
   }
 
   const related = finalResult.matches[0]
@@ -442,6 +623,108 @@ export async function saveFacts(statements) {
                                at: new Date().toISOString() });
   }
   return statements.length;
+}
+
+function domainOf(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
+}
+
+async function ingestWebPage(result, topic) {
+  try {
+    const url = new URL(result.url);
+    await ingestPage({
+      url: result.url,
+      title: result.deepTitle || result.title,
+      text: result.deepText,
+      domain: url.hostname,
+      domainLabel: url.hostname.replace(/^www\./, ''),
+      visitedAt: new Date().toISOString(),
+      dwellSeconds: 0,
+      source: 'web_enrichment',
+    });
+    await store.addAudit({ kind: 'deep_read', query: topic, provider: result.url, status: 'stored' });
+    return true;
+  } catch (error) {
+    await store.addAudit({ kind: 'deep_read', query: topic, provider: result.url,
+                           status: `error: ${String(error.message).slice(0, 100)}` });
+    return null;
+  }
+}
+
+function buildNeuralCitations(result, webResults) {
+  const floor = quoteFloor(result.bestRelevance);
+  const citations = [];
+  result.matches.filter((match) => match.scores.relevance >= floor).slice(0, 6)
+    .forEach((match, i) => citations.push({
+      n: i + 1, kind: 'memory', title: match.title, url: match.url,
+      domain: match.domainLabel || match.domain, when: match.visitedAgo,
+      dwell: match.dwellSeconds,
+    }));
+  (webResults || []).slice(0, 5).forEach((item) => citations.push({
+    n: citations.length + 1, kind: 'web', title: item.title, url: item.url,
+    domain: domainOf(item.url), when: 'fetched now', snippet: item.snippet,
+  }));
+  return citations;
+}
+
+function buildNeuralMessages(input) {
+  const {
+    parsed, emotion, tone, result, webResults, provider, settings,
+    pack, summary, history, storyMode, professional, name,
+  } = input;
+  const system = [];
+  const owner = name ? `${name}'s` : "the user's";
+  system.push(`You are Twin-Brain, ${owner} personal AI twin: a warm, talkative, honest friend and a gifted teacher living inside their browser extension. You know them through everything they read, which the extension retrieves for you below.`);
+  system.push('', 'POLICIES (never break these):');
+  system.push(policyPromptLines().join('\n'));
+  const profile = growthPackText(pack);
+  if (profile) {
+    system.push('', 'USER PROFILE (grown from their daily reading and chats — this is who you are talking to):');
+    system.push(profile);
+  }
+  if (summary) {
+    system.push('', 'LONG-TERM CHAT MEMORY:', summary);
+  }
+  system.push('', 'CURRENT EMOTIONAL READ:',
+    `detected: ${emotion.primary || 'neutral'} (intensity ${emotion.intensity}). ${tone.instruction}`);
+  if (storyMode) {
+    system.push('The user just shared a personal story. Respond like a close friend: acknowledge the feelings, reflect what you heard, ask ONE gentle question. Advice only if they asked for it.');
+  }
+  if (professional) {
+    system.push('This touches health, money or law: keep everything general and encourage consulting a real professional. The app appends the disclaimer itself.');
+  }
+
+  const memoryOk = promptAllowsMemory(provider, settings);
+  const floor = quoteFloor(result.bestRelevance);
+  const cited = result.matches.filter((match) => match.scores.relevance >= floor).slice(0, 5);
+  if (memoryOk && cited.length) {
+    system.push('', 'MEMORY (retrieved from pages the user actually read — cite with [n] when you use one):');
+    cited.forEach((match, i) => {
+      system.push(`[${i + 1}] “${truncate(match.title, 90)}” — ${match.domainLabel || match.domain}, visited ${match.visitedAgo}, ${Math.round((match.dwellSeconds || 0) / 60)}m on page.`);
+      const body = ((match.sentences && match.sentences.length) ? match.sentences.join(' ') : (match.text || '')).slice(0, 700);
+      system.push(`    ${body}`);
+    });
+  } else if (!memoryOk) {
+    system.push('', 'PRIVACY: this provider is remote and the user has NOT allowed their private memory to leave the machine. Do not claim knowledge of their browsing; answer generally or ask them to paste the details.');
+  } else {
+    system.push('', 'MEMORY: retrieval found nothing solid for this question. Say plainly that it is not in their reading history, then answer from general knowledge — never invent memories, pages or dates.');
+  }
+  if (webResults && webResults.length) {
+    system.push('', "WEB (fetched live with the user's permission — cite with [Wn]):");
+    webResults.slice(0, 5).forEach((item, i) => {
+      system.push(`[W${i + 1}] “${truncate(item.title, 90)}” — ${item.url}`);
+      system.push(`    ${truncate(item.deepText || item.snippet || '', 600)}`);
+    });
+  }
+  system.push('', 'ANSWER FORMAT: plain conversational text (no markdown headers). Simple words first, then depth. Translate jargon on the spot. End with one friendly question when it feels natural.');
+
+  const messages = [{ role: 'system', content: system.join('\n') }];
+  for (const turn of (history || []).slice(-6)) {
+    if (turn.query) messages.push({ role: 'user', content: truncate(turn.query, 300) });
+    if (turn.answer) messages.push({ role: 'assistant', content: truncate(turn.answer, 400) });
+  }
+  messages.push({ role: 'user', content: redact(parsed.raw) });
+  return messages;
 }
 
 async function runWebSearch(query, settings) {
@@ -583,6 +866,7 @@ export async function selfLearn(settings = {}) {
   await ensureLoaded();
   const pages = [...state.pages.values()];
   for (const page of pages.slice(0, 200)) await learnInterests(page);
+  await getGrowthPack(true);           // the twin grows every night
   await buildDigest(settings);
   if ((settings.webPermission || 'ask') === 'always' && settings.autoEnrich !== false) {
     const budget = (await store.getMeta('enrichBudget')) || { day: today(), used: 0 };

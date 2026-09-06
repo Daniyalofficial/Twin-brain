@@ -128,6 +128,52 @@ export function hedgeLine(bestRelevance) {
   return null;
 }
 
+/**
+ * The user shared a personal story. Respond like a close friend would:
+ * acknowledge -> reflect the emotional arc -> ask ONE gentle question.
+ * No advice unless they asked; no facts invented; pure listening.
+ */
+export function storyResponse(arc, name, facts, tone) {
+  const parts = [];
+  const who = name ? `, ${name}` : '';
+  const emotions = (arc || []).map((beat) => beat.emotion).filter(Boolean);
+  parts.push(pick([
+    `Thank you for telling me this${who}. I read every word.`,
+    `I'm really glad you shared that with me${who}.`,
+    `That's quite a story${who}. Thanks for trusting me with it.`,
+  ], name || 'story'));
+
+  if (emotions.length) {
+    const unique = [...new Set(emotions)];
+    parts.push(`I can hear the feelings moving through it — ${unique.slice(0, 3).join(', then ')}. That's a lot to carry.`);
+  } else {
+    parts.push('Even told plainly, I can tell this one mattered to you.');
+  }
+
+  const turning = (arc || []).find((beat) => beat.emotion) || (arc || [])[arc.length - 1];
+  if (turning && turning.sentence) {
+    parts.push(`The part that stood out to me: "${turning.sentence.slice(0, 120)}".`);
+  }
+
+  parts.push(pick([
+    'How are you feeling about it right now, in this moment?',
+    'What happened next? I have time — I always have time for you.',
+    'When you tell it again in a month, I bet the ending will feel different. What do you think it will be?',
+  ], (name || '') + emotions.length));
+
+  if (tone && (tone.mood === 'gentle' || tone.mood === 'soft')) {
+    parts.push('And no pressure to be productive about this one. Some stories just need a witness — I\'m right here.');
+  } else {
+    parts.push('If you want my two cents, ask and I\'ll give them honestly — but this is your story, so you lead.');
+  }
+
+  const learning = facts && facts.learning && facts.learning.value;
+  if (learning && emotions.indexOf('frustration') !== -1) {
+    parts.push(`Also, small reminder from your own notes: you're learning ${learning} — hard days are part of the deal, and you've shown up anyway.`);
+  }
+  return parts.join(' ');
+}
+
 export function farewell(name) {
   return pick([
     `See you${name ? `, ${name}` : ''}! I'll keep remembering everything.`,

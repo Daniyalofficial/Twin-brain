@@ -182,3 +182,76 @@ class RealtimeFriendTests(unittest.TestCase):
         self.assertIn("userName: ''", self.defaults)
         self.assertIn('id="set-userName"', read("options/options.html"))
         self.assertIn("'userName'", read("options/options.js"))
+
+
+class TwinCoreTests(unittest.TestCase):
+    """Real-model slot, emotions, policies, growth and multi-hop research."""
+
+    def setUp(self):
+        self.background = read("background.js")
+        self.popup = read("popup/popup.js")
+        self.brain = read("lib/brain/brain.js")
+        self.defaults = read("lib/defaults.js")
+        self.neural = read("lib/brain/neural.js")
+        self.policy = read("lib/brain/policy.js")
+        self.emotion = read("lib/brain/emotion.js")
+        self.growth = read("lib/brain/growth.js")
+        self.research = read("lib/brain/research.js")
+        self.options_html = read("options/options.html")
+
+    def test_neural_provider_framework(self):
+        for fragment in ("export async function detectProvider", "export async function* streamChat",
+                         "export function parseOllamaChunk", "export function parseSSELine",
+                         "export function pickModel", "'twinbrain'"):
+            self.assertIn(fragment, self.neural)
+
+    def test_policy_guardrails(self):
+        for fragment in ("export function screenInput", "CRISIS_RESPONSE", "export function redact",
+                         "export function screenLinks", "export function memoryAllowedFor",
+                         "findahelpline"):
+            self.assertIn(fragment, self.policy)
+
+    def test_emotion_engine(self):
+        for fragment in ("export function detectEmotion", "export function storyArc",
+                         "export function tonePlan", "INTENSIFIERS", "NEGATORS"):
+            self.assertIn(fragment, self.emotion)
+
+    def test_growth_and_modelfile_export(self):
+        for fragment in ("export function buildGrowthPack", "export function makeStudyPlan",
+                         "export function buildModelfile", "export function rollingSummary",
+                         "ollama create"):
+            self.assertIn(fragment, self.growth)
+
+    def test_multi_hop_research(self):
+        for fragment in ("export async function researchLoop", "export function coverageScore",
+                         "export function refinedQuery", "budgetRemaining"):
+            self.assertIn(fragment, self.research)
+
+    def test_brain_wires_the_twin_core(self):
+        for fragment in ("screenInput(parsed.raw)", "detectEmotion(parsed.raw)",
+                         "getProvider(settings)", "buildNeuralMessages", "hooks.token",
+                         "researchLoop(effective", "maybeStudyPlan", "getGrowthPack(true)",
+                         "storyResponse", "streamChat(provider"):
+            self.assertIn(fragment, self.brain)
+
+    def test_background_streams_real_model_tokens(self):
+        for fragment in ("token: (text) => broadcast('tb-token', { text })",
+                         "case 'tb-neural-status'", "case 'tb-modelfile'",
+                         "case 'tb-growth'"):
+            self.assertIn(fragment, self.background)
+
+    def test_popup_renders_live_neural_stream(self):
+        for fragment in ("tb-token", "activeStreamBox", "neural-stream", "providerLabel",
+                         "activeReqId"):
+            self.assertIn(fragment, self.popup)
+
+    def test_defaults_are_local_first_and_private(self):
+        self.assertIn("neuralEnabled: true", self.defaults)
+        self.assertIn("sendMemoryToCloud: false", self.defaults)
+        self.assertIn("researchHops: 3", self.defaults)
+        self.assertIn("ollamaUrl: 'http://127.0.0.1:11434'", self.defaults)
+
+    def test_options_expose_the_neural_engine(self):
+        for fragment in ('id="set-neuralBackend"', 'id="set-ollamaUrl"', 'id="set-sendMemoryToCloud"',
+                         'id="btn-modelfile"', 'id="btn-neural-test"', 'id="set-researchHops"'):
+            self.assertIn(fragment, self.options_html)

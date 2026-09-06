@@ -658,18 +658,38 @@ async function handleMessage(message, sender) {
       try {
         // real-time: the brain narrates its thinking while it works, and the
         // popup streams those notes into the "thinking" bubble live
+        const reqId = message.reqId || null;
+        const broadcast = (type, extra) => {
+          try {
+            chrome.runtime.sendMessage(Object.assign({ type, reqId }, extra),
+              () => void chrome.runtime.lastError);
+          } catch (error) { void error; }
+        };
         const out = await brain.answer(message.query, message.options || {}, settings, {
-          progress: (text) => {
-            try {
-              chrome.runtime.sendMessage({ type: 'tb-thought', text },
-                () => void chrome.runtime.lastError);
-            } catch (error) { void error; }
-          }
+          progress: (text) => broadcast('tb-thought', { text }),
+          token: (text) => broadcast('tb-token', { text }),
         });
         return Object.assign({ ok: true, local: true }, out);
       } catch (error) {
         return { ok: false, error: String(error && error.message || error) };
       }
+    }
+
+    case 'tb-neural-status': {
+      const settings = await getSettings();
+      const status = await brain.neuralStatus(settings);
+      return { ok: true, neural: status };
+    }
+
+    case 'tb-modelfile': {
+      const settings = await getSettings();
+      const text = await brain.getModelfile(settings);
+      return { ok: true, modelfile: text };
+    }
+
+    case 'tb-growth': {
+      const pack = await brain.getGrowthPack(true);
+      return { ok: true, growth: pack };
     }
 
     case 'tb-web-permission': {

@@ -77,11 +77,14 @@ function stat(key, value, sub) {
 
 const SWITCHES = ['captureEnabled', 'captureContent', 'globalPause', 'skipSensitiveUrls',
                   'webSearchEnabled', 'useWebForAnswers', 'enrichmentEnabled',
-                  'notificationsEnabled', 'webDeepRead', 'autoEnrich'];
+                  'notificationsEnabled', 'webDeepRead', 'autoEnrich',
+                  'neuralEnabled', 'sendMemoryToCloud'];
 const NUMBERS = ['minDwellSeconds', 'retentionDays', 'notificationDailyBudget',
-                 'enrichmentDailyBudget', 'webSearchDailyBudget', 'digestHour', 'topK'];
-const TEXTS = ['backendUrl', 'token', 'userName'];
-const SELECTS = ['answerStyle', 'webPermission', 'talkativeness'];
+                 'enrichmentDailyBudget', 'webSearchDailyBudget', 'digestHour', 'topK',
+                 'researchHops'];
+const TEXTS = ['backendUrl', 'token', 'userName', 'ollamaUrl', 'ollamaModel',
+               'openaiUrl', 'openaiKey', 'openaiModel'];
+const SELECTS = ['answerStyle', 'webPermission', 'talkativeness', 'neuralBackend'];
 
 let saveTimer = null;
 function scheduleSave(patch, label) {
@@ -628,7 +631,40 @@ function init() {
     await refreshStatus();
     await loadSites();
     await loadBrainStats();
+    wireNeuralButtons();
   })();
+}
+
+function wireNeuralButtons() {
+  const testBtn = $('#btn-neural-test');
+  if (testBtn) testBtn.addEventListener('click', async () => {
+    testBtn.disabled = true;
+    $('#neural-status').textContent = 'Probing local model servers…';
+    const response = await send('tb-neural-status');
+    testBtn.disabled = false;
+    if (response.ok && response.neural) {
+      const n = response.neural;
+      $('#neural-status').textContent = n.connected
+        ? `✅ Connected: ${n.label} — every answer now streams from this real model, grounded in your memory.`
+        : `ℹ️ ${n.label}. Start Ollama (ollama serve) or set an OpenAI-compatible URL, then test again. Everything still works on-device meanwhile.`;
+    } else {
+      $('#neural-status').textContent = `Could not test: ${response.error || 'unknown error'}`;
+    }
+  });
+  const mfBtn = $('#btn-modelfile');
+  if (mfBtn) mfBtn.addEventListener('click', async () => {
+    mfBtn.disabled = true;
+    const response = await send('tb-modelfile');
+    mfBtn.disabled = false;
+    if (!response.ok) { toast(`Export failed: ${response.error}`, true); return; }
+    const blob = new Blob([response.modelfile], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'twinbrain.Modelfile';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    toast('twinbrain.Modelfile downloaded — run: ollama create twinbrain -f twinbrain.Modelfile');
+  });
 }
 
 async function loadBrainStats() {

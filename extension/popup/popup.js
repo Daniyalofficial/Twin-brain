@@ -21,11 +21,21 @@ const toastEl = $('#toast');
 let state = { settings: null, counts: null, backend: null, busy: false };
 let activeThinking = null;   // the live "thinking" bubble text node
 let streamToken = 0;         // cancels an old typewriter when a new ask starts
+let activeReqId = null;      // correlates live broadcasts with the running ask
+let activeStreamBox = null;  // where a real neural model's tokens land live
 
-// real-time: the brain narrates its thinking while it works
+// real-time: the brain narrates its thinking and streams model tokens live
 chrome.runtime.onMessage.addListener((message) => {
-  if (message && message.type === 'tb-thought' && activeThinking) {
+  if (!message || (message.reqId && message.reqId !== activeReqId)) return;
+  if (message.type === 'tb-thought' && activeThinking) {
     activeThinking.textContent = message.text;
+  } else if (message.type === 'tb-token' && activeStreamBox) {
+    if (activeStreamBox.hidden) {
+      activeStreamBox.hidden = false;
+      if (activeThinking) activeThinking.textContent = 'responding live…';
+    }
+    activeStreamBox.appendChild(document.createTextNode(message.text));
+    messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 });
 
@@ -214,14 +224,59 @@ function addMeta(node, data) {
 }
 
 /** Sectioned "super explainer" rendering — streamed live, like a chat. */
-async function renderAnswerLive(node, data, query, token) {
+async function renderAnswerLive(node, data, query, token, streamBox) {
   const conv = data.conversation || {};
   const ex = data.explanation || {};
   node.className = `msg bot ${data.grounded ? 'grounded' : 'ungrounded'}`;
+
+  // --- NEURAL mode: a real model already typed its answer live --------------
+  if (data.mode === 'neural' && streamBox) {
+    if (conv.empathy) {
+      const em = el('div', 'empathy', conv.empathy);
+      node.insertBefore(em, streamBox);
+    }
+    streamBox.classList.add('reveal', 'done');
+    if (conv.questionBack) await typeBlock(node, 'friend-question', conv.questionBack, token);
+    const citations = data.citations || [];
+    if (citations.length) {
+      const box = el('div', 'cites reveal');
+      box.appendChild(el('div', 'label', 'Where this comes from'));
+      citations.slice(0, 8).forEach((citeItem) => {
+        const row = el('div', 'cite');
+        row.appendChild(el('span', 'idx', String(citeItem.n)));
+        const main = el('div', 'row');
+        const a = el('a', null, citeItem.title || citeItem.url);
+        a.href = citeItem.url; a.target = '_blank'; a.rel = 'noreferrer';
+        main.appendChild(a);
+        main.appendChild(el('span', `badge ${citeItem.kind === 'web' ? 'warn' : 'ok'}`, citeItem.kind));
+        main.appendChild(el('span', 'site',
+          `${(citeItem.domain || '').replace(/^www\./, '')} · ${citeItem.when || ''}`));
+        row.appendChild(main);
+        box.appendChild(row);
+      });
+      node.appendChild(box);
+    }
+    if (ex.followups && ex.followups.length) {
+      const chips = el('div', 'followups reveal');
+      ex.followups.forEach((chipText) => {
+        const chip = el('button', 'chip', chipText);
+        chip.type = 'button';
+        chip.addEventListener('click', () => ask(chipText, { silent: true }));
+        chips.appendChild(chip);
+      });
+      node.appendChild(chips);
+    }
+    addMeta(node, data);
+    const engine = el('div', 'engine-line', `🧠 real model: ${data.providerLabel || 'local LLM'} · grounded in ${ (data.retrieval && data.retrieval.count) || 0 } memory slice(s)`);
+    node.appendChild(engine);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return;
+  }
+  if (streamBox) streamBox.remove();
   node.textContent = '';
 
-  // --- chat / clarify: typed text + optional chips --------------------------
-  if (data.mode === 'chat' || data.mode === 'clarify') {
+  // --- chat / clarify / policy: typed text + optional chips -----------------
+  if (data.mode === 'chat' || data.mode === 'clarify' || data.mode === 'policy') {
     if (conv.empathy && !await typeBlock(node, 'empathy', conv.empathy, token)) return;
     if (!await typeBlock(node, 'text chat-text', data.text || '', token)) return;
     if (data.mode === 'clarify' && data.chips && data.chips.length) {
@@ -412,8 +467,19 @@ async function ask(query, options = {}) {
   const token = streamToken;
   const thinking = addThinking();
 
+  // the bot bubble exists from the first millisecond: if a real local model
+  // answers, its tokens stream into streamBox while it thinks
+  const node = el('div', 'msg bot');
+  const streamBox = el('div', 'text neural-stream');
+  streamBox.hidden = true;
+  node.appendChild(streamBox);
+  messagesEl.appendChild(node);
+  activeReqId = `r${Date.now()}${Math.floor(Math.random() * 1e6)}`;
+  activeStreamBox = streamBox;
+
   const response = await send('tb-query', {
     query: text,
+    reqId: activeReqId,
     options: {
       useWeb: options.useWeb === true || $('#web-toggle').checked,
       denied: options.denied === true,
@@ -423,18 +489,21 @@ async function ask(query, options = {}) {
 
   thinking.remove();
   activeThinking = null;
-  const node = el('div', 'msg bot');
-  messagesEl.appendChild(node);
+  activeReqId = null;
+  activeStreamBox = null;
+  const streamed = !streamBox.hidden && streamBox.textContent.length > 0;
 
   if (!response.ok) {
     node.className = 'msg bot error';
+    streamBox.remove();
     node.appendChild(el('div', 'text',
       `The on-device brain hit a problem: ${response.error}\n\n` +
       'Your memory itself is safe — reload the extension from chrome://extensions if this repeats.'));
     sourcesBar.classList.add('hidden');
   } else {
     showSources(response);
-    await renderAnswerLive(node, response, text, token);
+    await renderAnswerLive(node, response, text, token, streamed ? streamBox : null);
+    if (!streamed) streamBox.remove();
   }
   state.busy = false;
   sendEl.disabled = false;

@@ -113,6 +113,61 @@ Run it: load `extension/` in `chrome://extensions` (Developer mode → Load
 unpacked). That's the whole install. Start `run.bat`/`run.sh` only if you want
 the browser dashboard and the backup mirror.
 
+## The twin core: real models + real growth
+
+The on-device brain now has a **neural slot**, an **emotion engine**, a
+**policy layer**, **multi-hop research** and a **growth system** — it gets
+closer to being *your* twin every day.
+
+### Real LLM, fully local (Ollama & friends)
+Install [Ollama](https://ollama.com), run `ollama pull llama3.2`, and the
+extension **auto-detects it** (`lib/brain/neural.js`) and streams answers
+token-by-token into the popup — a real model, offline, private, grounded in
+*your* retrieved memory (RAG): every answer sees your cited pages, your
+profile and your chat history, and must cite `[n]` / `[Wn]` sources.
+Any OpenAI-compatible server works too (LM Studio, llama.cpp, vLLM, or a
+cloud key). **No model running? Nothing breaks** — the on-device persona
+engine answers instead.
+
+### Your own model: export the twin as a Modelfile
+Options → *Export my twin (Ollama Modelfile)* downloads `twinbrain.Modelfile`
+— your persona, your policies and your grown profile baked in:
+
+```bash
+ollama create twinbrain -f twinbrain.Modelfile
+```
+
+From then on `auto` model selection prefers **twinbrain** — literally your own
+model. Re-export any time; it grows as you do.
+
+### Growth: the AI learns *you* nightly
+`lib/brain/growth.js` builds a **growth pack** from derived statistics only
+(no fake scores): identity (facts you stated), reading habits (top sites,
+peak hour, deep reads), chat style, strongest interests and active learning
+threads. Say *"I am learning Spanish"* and it starts a **shared study plan**
+from your own reading ("let's learn together"), with milestones and check-ins.
+
+### Emotions & stories
+`lib/brain/emotion.js` reads joy, sadness, anger, frustration, anxiety,
+tiredness, curiosity, affection and pride — with negation and intensifiers —
+and picks a tone plan (celebrate / sit-with / coach / calm). Long personal
+messages are treated as **stories**: acknowledge → reflect the emotional arc
+→ one gentle question, advice only if asked. Joy gets the occasional joke.
+
+### Policy & restrictions (like a real AI)
+`lib/brain/policy.js`: crisis detection (real helplines, never casual advice),
+harmful/illegal/explicit refusals with a warm redirect, regulated-topic
+disclaimers, secret/PII redaction, an invented-link killer (only URLs from
+retrieval or permitted web results survive), and a hard privacy rule:
+**your memory only goes to LOCAL models** unless you explicitly enable
+`sendMemoryToCloud`.
+
+### Multi-hop research
+One search not enough? `lib/brain/research.js` measures answer coverage,
+refines the query from the gaps and searches again (default 3 hops, daily
+budget, every hop audited) — deep-reading full pages when snippets are thin.
+Still permission-gated: `ask` / `always` / `never`.
+
 ## The privacy model
 
 The single source of truth for "may we capture this?" is `server/capture.py:check_url`,
@@ -273,10 +328,11 @@ locally so privacy keeps working while the backend is offline.
 ## Development
 
 ```bash
-./.venv/bin/python -m unittest discover -s tests -v   # 87 tests, no network needed
-node --test tests/js/                                 # 64 on-device brain tests
-                                                      # incl. full end-to-end run
-                                                      # against an in-memory IDB
+./.venv/bin/python -m unittest discover -s tests -v   # 97 tests, no network needed
+node --test tests/js/                                 # 94 on-device brain tests:
+                                                      # retrieval, real-time friend,
+                                                      # twin core + full end-to-end
+                                                      # run against an in-memory IDB
 ./.venv/bin/python scripts/make_icons.py              # regenerate extension icons
 ./.venv/bin/python scripts/seed_demo.py --wipe        # demo memory
 ```

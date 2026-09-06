@@ -279,3 +279,16 @@ button.ghost:hover { color: var(--text); border-color: var(--accent-dim); }
   border-left: 2px solid var(--accent);
 }
 .msg .chat-text { white-space: pre-wrap; }
+
+/* ---------------- neural streaming ---------------- */
+.msg .neural-stream { white-space: pre-wrap; }
+.msg .neural-stream::after {
+  content: '▍'; color: var(--accent);
+  animation: tb-blink .9s steps(1) infinite;
+}
+@keyframes tb-blink { 50% { opacity: 0; } }
+.msg .engine-line {
+  margin-top: 8px; font-size: 11px; color: var(--muted);
+  border-top: 1px dashed var(--line); padding-top: 6px;
+}
+.msg .neural-stream.done::after { content: ''; animation: none; }
