@@ -19,6 +19,15 @@ const sourcesBar = $('#sources-bar');
 const toastEl = $('#toast');
 
 let state = { settings: null, counts: null, backend: null, busy: false };
+let activeThinking = null;   // the live "thinking" bubble text node
+let streamToken = 0;         // cancels an old typewriter when a new ask starts
+
+// real-time: the brain narrates its thinking while it works
+chrome.runtime.onMessage.addListener((message) => {
+  if (message && message.type === 'tb-thought' && activeThinking) {
+    activeThinking.textContent = message.text;
+  }
+});
 
 // ---------------------------------------------------------------------------
 // plumbing
@@ -147,11 +156,47 @@ function addThinking() {
   const node = el('div', 'msg bot');
   const inner = el('div', 'thinking');
   inner.appendChild(el('span', 'pulse'));
-  inner.appendChild(el('span', null, 'searching your memory…'));
+  const textNode = el('span', null, 'reading your message…');
+  inner.appendChild(textNode);
   node.appendChild(inner);
   messagesEl.appendChild(node);
   messagesEl.scrollTop = messagesEl.scrollHeight;
+  activeThinking = textNode;
   return node;
+}
+
+// --- real-time typewriter ---------------------------------------------------
+
+function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+
+/** Type text word-by-word, fast enough to feel live, slow enough to read. */
+async function typeInto(container, text, token) {
+  const words = String(text || '').split(/(\s+)/);
+  const perWord = Math.max(6, Math.min(26, Math.floor(1400 / Math.max(words.length, 1))));
+  for (const word of words) {
+    if (token !== streamToken) return false;      // a newer answer took over
+    container.appendChild(document.createTextNode(word));
+    if (word.trim()) {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      await sleep(perWord);
+    }
+  }
+  return true;
+}
+
+async function typeBlock(parent, className, text, token) {
+  if (!text) return true;
+  const node = el('div', className);
+  parent.appendChild(node);
+  return typeInto(node, text, token);
+}
+
+function reveal(parent, node, token) {
+  if (token !== streamToken) return false;
+  node.classList.add('reveal');
+  parent.appendChild(node);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return true;
 }
 
 function addMeta(node, data) {
@@ -168,90 +213,125 @@ function addMeta(node, data) {
   node.appendChild(meta);
 }
 
-/** Sectioned "super explainer" rendering. */
-function renderExplanation(node, data, query) {
+/** Sectioned "super explainer" rendering — streamed live, like a chat. */
+async function renderAnswerLive(node, data, query, token) {
+  const conv = data.conversation || {};
   const ex = data.explanation || {};
   node.className = `msg bot ${data.grounded ? 'grounded' : 'ungrounded'}`;
   node.textContent = '';
 
-  if (ex.opener) node.appendChild(el('div', 'opener', ex.opener));
+  // --- chat / clarify: typed text + optional chips --------------------------
+  if (data.mode === 'chat' || data.mode === 'clarify') {
+    if (conv.empathy && !await typeBlock(node, 'empathy', conv.empathy, token)) return;
+    if (!await typeBlock(node, 'text chat-text', data.text || '', token)) return;
+    if (data.mode === 'clarify' && data.chips && data.chips.length) {
+      const chips = el('div', 'followups');
+      data.chips.forEach((text) => {
+        const chip = el('button', 'chip', text);
+        chip.type = 'button';
+        chip.addEventListener('click', () => ask(text, { silent: true }));
+        chips.appendChild(chip);
+      });
+      reveal(node, chips, token);
+    }
+    addMeta(node, data);
+    return;
+  }
+
+  // --- the full lesson, streamed section by section --------------------------
+  if (conv.empathy && !await typeBlock(node, 'empathy', conv.empathy, token)) return;
+  if (conv.factConfirm && !await typeBlock(node, 'fact-confirm', conv.factConfirm, token)) return;
+  if (ex.opener && !await typeBlock(node, 'opener', ex.opener, token)) return;
+  if (conv.weave && !await typeBlock(node, 'connect', conv.weave, token)) return;
+  if (conv.hedge && !await typeBlock(node, 'hedge', conv.hedge, token)) return;
+
+  if (conv.short) {
+    const block = el('div', 'short');
+    block.appendChild(el('div', 'label', 'Straight answer'));
+    const para = el('div', 'text');
+    block.appendChild(para);
+    if (!reveal(node, block, token)) return;
+    if (!await typeInto(para, conv.short, token)) return;
+  }
 
   if (ex.simple) {
     const block = el('div', 'simple');
     block.appendChild(el('div', 'label', 'In simple words'));
-    const p = el('div', 'text');
-    renderAnswerText(p, ex.simple, ex.citations);
-    block.appendChild(p);
-    node.appendChild(block);
+    const para = el('div', 'text');
+    block.appendChild(para);
+    if (!reveal(node, block, token)) return;
+    if (!await typeInto(para, ex.simple, token)) return;
   }
 
-  if (data.adviceText) {
-    const block = el('div', 'advice');
-    renderAnswerText(block, data.adviceText, ex.citations);
-    node.appendChild(block);
-  }
+  if (data.adviceText && !await typeBlock(node, 'advice', data.adviceText, token)) return;
 
   if (ex.points && ex.points.length) {
     const block = el('div', 'points');
     block.appendChild(el('div', 'label', 'The details'));
     const ul = el('ul');
-    ex.points.forEach((point) => ul.appendChild(el('li', null, point)));
     block.appendChild(ul);
-    node.appendChild(block);
+    if (!reveal(node, block, token)) return;
+    for (const point of ex.points) {
+      if (token !== streamToken) return;
+      const li = el('li', 'reveal', point);
+      ul.appendChild(li);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      await sleep(160);
+    }
   }
 
   if (ex.words && ex.words.length) {
     const block = el('div', 'words');
     block.appendChild(el('div', 'label', 'Tricky words, translated'));
     ex.words.forEach((word) => {
-      const chip = el('div', 'word-chip');
+      const chip = el('div', 'word-chip reveal');
       chip.appendChild(el('b', null, word.term));
       chip.appendChild(el('span', null, ` = ${word.plain}`));
       block.appendChild(chip);
     });
-    node.appendChild(block);
+    if (!reveal(node, block, token)) return;
   }
 
   if (ex.webNotes && ex.webNotes.length) {
     const block = el('div', 'webnotes');
     block.appendChild(el('div', 'label', 'From the web (you allowed this)'));
     const ul = el('ul');
-    ex.webNotes.forEach((note) => {
-      const li = el('li', null, note.text);
-      li.appendChild(el('sup', 'cite-ref', `[${note.n}]`));
+    ex.webNotes.forEach((noteItem) => {
+      const li = el('li', 'reveal', noteItem.text);
+      li.appendChild(el('sup', 'cite-ref', `[${noteItem.n}]`));
       ul.appendChild(li);
     });
     block.appendChild(ul);
-    node.appendChild(block);
+    if (!reveal(node, block, token)) return;
   }
 
-  if (ex.connect) node.appendChild(el('div', 'connect', ex.connect));
-  if (ex.webDeniedLine) node.appendChild(el('div', 'connect', ex.webDeniedLine));
+  if (ex.connect && !await typeBlock(node, 'connect', ex.connect, token)) return;
+  if (ex.webDeniedLine && !await typeBlock(node, 'connect', ex.webDeniedLine, token)) return;
 
   const citations = ex.citations || data.citations || [];
   if (citations.length) {
-    const box = el('div', 'cites');
+    const box = el('div', 'cites reveal');
     box.appendChild(el('div', 'label', 'Where this comes from'));
-    citations.slice(0, 8).forEach((cite) => {
+    citations.slice(0, 8).forEach((citeItem) => {
       const row = el('div', 'cite');
-      row.appendChild(el('span', 'idx', String(cite.n || cite.index)));
+      row.appendChild(el('span', 'idx', String(citeItem.n || citeItem.index)));
       const main = el('div', 'row');
-      const a = el('a', null, cite.title || cite.url);
-      a.href = cite.url; a.target = '_blank'; a.rel = 'noreferrer';
+      const a = el('a', null, citeItem.title || citeItem.url);
+      a.href = citeItem.url; a.target = '_blank'; a.rel = 'noreferrer';
       main.appendChild(a);
-      const kind = cite.kind === 'web' ? 'web' : 'memory';
+      const kind = citeItem.kind === 'web' ? 'web' : 'memory';
       main.appendChild(el('span', `badge ${kind === 'web' ? 'warn' : 'ok'}`, kind));
       main.appendChild(el('span', 'site',
-        `${(cite.domain || '').replace(/^www\./, '')} · ${cite.when || 'visited —'}` +
-        (cite.dwell ? ` · ${Math.round(cite.dwell / 60)}m on page` : '')));
+        `${(citeItem.domain || '').replace(/^www\./, '')} · ${citeItem.when || 'visited —'}` +
+        (citeItem.dwell ? ` · ${Math.round(citeItem.dwell / 60)}m on page` : '')));
       row.appendChild(main);
       box.appendChild(row);
     });
-    node.appendChild(box);
+    reveal(node, box, token);
   }
 
   if (ex.further && ex.further.length) {
-    const box = el('div', 'further');
+    const box = el('div', 'further reveal');
     box.appendChild(el('div', 'label', 'Related reading (links at the end, as you like it)'));
     ex.further.forEach((item) => {
       const row = el('div', 'further-row');
@@ -261,31 +341,30 @@ function renderExplanation(node, data, query) {
       row.appendChild(el('span', 'site', item.why || ''));
       box.appendChild(row);
     });
-    node.appendChild(box);
+    reveal(node, box, token);
   }
 
-  if (ex.honesty) node.appendChild(el('div', 'honesty', ex.honesty));
-  if (ex.closing) node.appendChild(el('div', 'closing', ex.closing));
+  if (ex.honesty && !await typeBlock(node, 'honesty', ex.honesty, token)) return;
+  if (ex.closing && !await typeBlock(node, 'closing', ex.closing, token)) return;
+  if (conv.questionBack && !await typeBlock(node, 'friend-question', conv.questionBack, token)) return;
 
   if (ex.followups && ex.followups.length) {
-    const chips = el('div', 'followups');
+    const chips = el('div', 'followups reveal');
     ex.followups.forEach((text) => {
       const chip = el('button', 'chip', text);
       chip.type = 'button';
       chip.addEventListener('click', () => ask(text, { silent: true }));
       chips.appendChild(chip);
     });
-    node.appendChild(chips);
+    reveal(node, chips, token);
   }
-
-  addMeta(node, data);
 
   // --- permission card: the AI asks before touching the internet ------------
   if (data.mode === 'needs_permission') {
-    const card = el('div', 'perm-card');
-    card.appendChild(el('div', 'perm-title', 'May I check the web for this?'));
+    const card = el('div', 'perm-card reveal');
+    card.appendChild(el('div', 'perm-title', 'Hey — may I check the web for this?'));
     card.appendChild(el('div', 'perm-sub',
-      'Nothing is in your memory about it. I will search, read the top result and explain it — only with your okay.'));
+      'It\'s not in your memory yet. I\'ll search live, read the best result and explain it here — only with your okay.'));
     const actions = el('div', 'perm-actions');
     const once = el('button', 'chip primary', 'Allow once');
     once.addEventListener('click', () => ask(query, { useWeb: true, silent: true }));
@@ -302,10 +381,10 @@ function renderExplanation(node, data, query) {
     actions.appendChild(always);
     actions.appendChild(no);
     card.appendChild(actions);
-    node.appendChild(card);
+    reveal(node, card, token);
   }
 
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  addMeta(node, data);
 }
 
 function showSources(data) {
@@ -329,6 +408,8 @@ async function ask(query, options = {}) {
   state.busy = true;
   sendEl.disabled = true;
   if (!options.silent) { inputEl.value = ''; autoGrow(); addUserMessage(text); }
+  streamToken += 1;
+  const token = streamToken;
   const thinking = addThinking();
 
   const response = await send('tb-query', {
@@ -341,6 +422,7 @@ async function ask(query, options = {}) {
   });
 
   thinking.remove();
+  activeThinking = null;
   const node = el('div', 'msg bot');
   messagesEl.appendChild(node);
 
@@ -351,8 +433,8 @@ async function ask(query, options = {}) {
       'Your memory itself is safe — reload the extension from chrome://extensions if this repeats.'));
     sourcesBar.classList.add('hidden');
   } else {
-    renderExplanation(node, response, text);
     showSources(response);
+    await renderAnswerLive(node, response, text, token);
   }
   state.busy = false;
   sendEl.disabled = false;

@@ -80,7 +80,7 @@ const SWITCHES = ['captureEnabled', 'captureContent', 'globalPause', 'skipSensit
                   'notificationsEnabled', 'webDeepRead', 'autoEnrich'];
 const NUMBERS = ['minDwellSeconds', 'retentionDays', 'notificationDailyBudget',
                  'enrichmentDailyBudget', 'webSearchDailyBudget', 'digestHour', 'topK'];
-const TEXTS = ['backendUrl', 'token'];
+const TEXTS = ['backendUrl', 'token', 'userName'];
 const SELECTS = ['answerStyle', 'webPermission', 'talkativeness'];
 
 let saveTimer = null;

@@ -10,6 +10,7 @@ export const DEFAULT_SETTINGS = {
   // --- on-device brain (works with no backend and no internet) ---
   webPermission: 'ask',          // 'ask' | 'always' | 'never'
   talkativeness: 'friendly',     // 'friendly' | 'quiet'
+  userName: '',                   // so your AI friend can greet you by name
   webDeepRead: true,             // fetch + store the top web result, with permission
   autoEnrich: true,               // nightly self-training, only when webPermission=always
   // --- connection ---

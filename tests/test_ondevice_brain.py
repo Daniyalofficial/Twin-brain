@@ -131,3 +131,54 @@ class ExplainerContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RealtimeFriendTests(unittest.TestCase):
+    """The real-time friend layer must stay wired end to end."""
+
+    def setUp(self):
+        self.background = read("background.js")
+        self.popup = read("popup/popup.js")
+        self.brain = read("lib/brain/brain.js")
+        self.defaults = read("lib/defaults.js")
+        self.understand = read("lib/brain/understand.js")
+        self.persona = read("lib/brain/persona.js")
+        self.direct = read("lib/brain/direct.js")
+
+    def test_understanding_layer_exists(self):
+        for fragment in ("export function parseQuery", "export function extractFacts",
+                         "export function questionType", "export function parseTimeRange"):
+            self.assertIn(fragment, self.understand)
+
+    def test_persona_layer_exists(self):
+        for fragment in ("export function displayName", "export function greeting",
+                         "export function questionBack", "export function weaveFacts",
+                         "export function hedgeLine"):
+            self.assertIn(fragment, self.persona)
+
+    def test_direct_answers_exist(self):
+        self.assertIn("export function directAnswer", self.direct)
+        for case in ("case 'when'", "case 'count'", "case 'which_source'",
+                     "case 'verify'", "case 'recap'", "case 'compare'"):
+            self.assertIn(case, self.direct)
+
+    def test_brain_uses_the_realtime_layers(self):
+        for fragment in ("parseQuery(query, { history", "directAnswer(parsed",
+                         "loadFacts", "saveFacts", "mode: 'clarify'",
+                         "hooks.progress", "questionBack(facts"):
+            self.assertIn(fragment, self.brain)
+
+    def test_background_streams_thinking_to_the_popup(self):
+        self.assertIn("progress: (text)", self.background)
+        self.assertIn("tb-thought", self.background)
+
+    def test_popup_streams_answers_like_a_chat(self):
+        for fragment in ("renderAnswerLive", "typeInto", "tb-thought",
+                         "activeThinking", "streamToken", "friend-question",
+                         "Straight answer"):
+            self.assertIn(fragment, self.popup)
+
+    def test_user_name_setting_exists(self):
+        self.assertIn("userName: ''", self.defaults)
+        self.assertIn('id="set-userName"', read("options/options.html"))
+        self.assertIn("'userName'", read("options/options.js"))

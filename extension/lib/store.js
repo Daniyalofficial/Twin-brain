@@ -282,3 +282,11 @@ export async function recentAudit(limit = 60) {
     request.onerror = () => reject(request.error);
   }));
 }
+
+export async function getAllMeta() {
+  return openDb().then((db) => new Promise((resolve, reject) => {
+    const request = db.transaction(META, 'readonly').objectStore(META).getAll();
+    request.onsuccess = () => resolve(request.result || []);
+    request.onerror = () => reject(request.error);
+  }));
+}

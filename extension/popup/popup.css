@@ -261,3 +261,21 @@ button.ghost:hover { color: var(--text); border-color: var(--accent-dim); }
   border-color: var(--accent-dim); font-weight: 600;
 }
 .chip.primary:hover { background: #37826a; color: #eafff5; }
+
+/* ---------------- real-time friend layer ---------------- */
+@keyframes tb-reveal { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.reveal { animation: tb-reveal .22s ease-out both; }
+.msg .empathy { color: var(--muted); font-style: italic; margin-bottom: 5px; }
+.msg .fact-confirm {
+  background: var(--bg-soft); border: 1px dashed var(--accent-dim);
+  border-radius: 7px; padding: 5px 8px; margin-bottom: 6px; color: var(--accent);
+}
+.msg .hedge { color: var(--warn); font-size: 12px; margin-bottom: 4px; }
+.msg .short { margin-bottom: 8px; }
+.msg .short .text { font-weight: 550; }
+.msg .friend-question {
+  margin-top: 8px; padding: 6px 8px; border-radius: 7px;
+  background: var(--bg-soft); color: var(--text); font-style: italic;
+  border-left: 2px solid var(--accent);
+}
+.msg .chat-text { white-space: pre-wrap; }

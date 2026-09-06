@@ -15,6 +15,12 @@ import { embed, embedQuery } from './embed.js';
 import { LexicalIndex } from './lexical.js';
 import { retrieve, relatedPages } from './retrieve.js';
 import { explain, advice, smalltalk } from './explain.js';
+import { parseQuery } from './understand.js';
+import {
+  displayName, greeting, thinkingNotes, respondToCompliment, respondToThanks,
+  questionBack, empathyLine, weaveFacts, hedgeLine, farewell,
+} from './persona.js';
+import { directAnswer } from './direct.js';
 import { searchWeb, fetchPageText } from './websearch.js';
 import {
   contentWords, queryTerms, splitSentences, stem, humanTime, fmtDuration, truncate,
@@ -177,7 +183,6 @@ export async function learnInterests(page) {
 // answering
 // ---------------------------------------------------------------------------
 
-const CONTINUATION = /^(tell me more|more|go on|continue|explain more|and then|why\??)$/i;
 const ADVICE = /\b(should i|what should|advice|recommend|best way|how do i choose|worth it)\b/i;
 const SMALLTALK = /^(hi|hey|hello|yo|sup|how are you|good (morning|evening|afternoon)|thanks|thank you|who are you|what are you)\b/i;
 const META = /\b(my day|today|this week|how much have i read|my stats|summar[i]se my|reading time|how many pages)\b/i;
@@ -192,49 +197,110 @@ export function classify(query) {
   return 'knowledge';
 }
 
-export async function answer(query, options = {}, settings = {}) {
+export async function answer(query, options = {}, settings = {}, hooks = {}) {
+  const note = (text) => {
+    if (hooks.progress) { try { hooks.progress(text); } catch (error) { void error; } }
+  };
   await ensureLoaded();
   const permission = settings.webPermission || 'ask';
-  let effective = (query || '').trim();
+  const talkative = settings.talkativeness !== 'quiet';
+  let facts = await loadFacts();
+  const history = await store.recentConversations(6);
+  const parsed = parseQuery(query, { history, interests: state.interests });
+  const name = displayName(facts, settings);
 
-  // follow-ups: "tell me more" continues the last question
-  if (CONTINUATION.test(effective)) {
-    const history = await store.recentConversations(2);
-    if (history.length) effective = `${history[history.length - 1].query} ${effective}`;
+  // --- the AI learns what you tell it about yourself, in real time ---------
+  let factConfirm = null;
+  if (parsed.factStatements.length) {
+    await saveFacts(parsed.factStatements);
+    facts = await loadFacts();
+    factConfirm = parsed.factStatements
+      .map((fact) => FACT_CONFIRM[fact.kind] ? FACT_CONFIRM[fact.kind](fact.value) : null)
+      .filter(Boolean).join(' ');
+    const factValueWords = new Set(parsed.factStatements
+      .flatMap((fact) => fact.value.toLowerCase().split(/\W+/)));
+    const residual = parsed.topicWords.filter((w) =>
+      !factValueWords.has(w) && !FACT_WORDS.has(w));
+    if (!parsed.isQuestion && residual.length <= 1) {
+      // a pure "remember this" moment — answer like a friend, don't retrieve
+      const text = `${factConfirm}${talkative ? `\n\n${questionBack(facts, state.interests, parsed)}` : ''}`;
+      await store.putConversation({ query: parsed.raw, mode: 'fact', type: 'fact',
+                                    topic: parsed.topicWords.join(' '), answer: text });
+      return { mode: 'chat', text, grounded: true, citations: [], followups: [],
+               conversation: { name } };
+    }
   }
 
-  const intent = classify(effective);
   const stats = await brainStats();
 
-  if (intent === 'smalltalk') {
-    const text = smalltalk(effective, stats, state.interests);
-    await store.putConversation({ query: effective, mode: 'smalltalk', answer: text });
-    return { mode: 'chat', text, grounded: true, citations: [], followups: [] };
+  // --- small talk: greetings, thanks, compliments, goodbyes ----------------
+  if (parsed.type === 'smalltalk') {
+    let text;
+    if (parsed.compliment) text = respondToCompliment(name);
+    else if (/\b(thanks|thank you|shukriya)\b/i.test(parsed.raw)) text = respondToThanks(name);
+    else if (/\b(bye|goodbye|see you|khuda hafiz|good night)\b/i.test(parsed.raw)) text = farewell(name);
+    else if (/^(?:hi|hey|hello|yo|sup|assalam|salam|good (?:morning|afternoon|evening))\b/i.test(parsed.raw)) {
+      text = `${greeting(name)} ${statsLine(stats)}`;
+    } else {
+      text = smalltalk(parsed.raw, stats, state.interests);
+    }
+    if (talkative && !parsed.compliment) text += `\n\n${questionBack(facts, state.interests, parsed)}`;
+    await store.putConversation({ query: parsed.raw, mode: 'smalltalk', type: 'smalltalk',
+                                  topic: '', answer: text });
+    return { mode: 'chat', text, grounded: true, citations: [], followups: [],
+             conversation: { name, empathy: empathyLine(parsed.raw) } };
   }
 
-  if (intent === 'meta') {
-    const text = metaAnswer(stats);
-    await store.putConversation({ query: effective, mode: 'meta', answer: text });
-    return { mode: 'chat', text, grounded: true, citations: [], followups: [] };
+  // --- too vague to answer honestly? ask instead of guessing ---------------
+  if (parsed.ambiguous) {
+    const chips = state.interests.slice(0, 3)
+      .map((interest) => `What do I know about ${interest.topic}?`);
+    chips.push('What did I read today?');
+    chips.push('What are my top interests?');
+    const text = `I want to answer this well${name ? `, ${name}` : ''}, but I need one more word from you: a topic, a site, or a day. What should I look for?`;
+    await store.putConversation({ query: parsed.raw, mode: 'clarify', type: 'clarify',
+                                  topic: '', answer: text });
+    return { mode: 'clarify', text, chips, grounded: true, citations: [] };
   }
 
-  const result = retrieve(state.chunks, state.index, effective,
-    { topK: options.topK || 8 });
+  // --- "how big is my brain?" style questions ------------------------------
+  if (parsed.type === 'meta') {
+    const text = parsed.timeRange
+      ? (directAnswer(parsed, { matches: [] }, { pages: pagesNow(), interests: state.interests }) || {}).text || metaAnswer(stats)
+      : metaAnswer(stats);
+    await store.putConversation({ query: parsed.raw, mode: 'meta', type: 'meta',
+                                  topic: '', answer: text });
+    return { mode: 'chat', text, grounded: true, citations: [], followups: [],
+             conversation: { name } };
+  }
+
+  // --- real-time retrieval with thinking-out-loud --------------------------
+  const notes = thinkingNotes(parsed, stats);
+  note(notes[0]);
+  const effective = parsed.resolvedQuery || query;
+  const topK = options.topK || 8;
+  const result = retrieve(state.chunks, state.index, effective, { topK });
+  note(notes[1] || notes[0]);
+
+  // memory-only question types must never trigger a pointless web search
+  const memoryOnly = ['when', 'count', 'which_source', 'verify', 'recap'].includes(parsed.type);
 
   let webResults = [];
   let usedWeb = false;
   let webDenied = Boolean(options.denied);
   let needsPermission = false;
 
-  const explicitWeb = intent === 'web' || options.useWeb === true;
-  if (!result.grounded || explicitWeb) {
+  const explicitWeb = parsed.type === 'web' || options.useWeb === true;
+  if ((!result.grounded && !memoryOnly) || explicitWeb) {
     if (permission === 'never' || webDenied) {
       webDenied = true;
     } else if (permission === 'always' || explicitWeb || options.useWeb === true) {
+      note('you said okay — searching the web live…');
       const web = await runWebSearch(effective, settings);
       webResults = web.results || [];
       usedWeb = webResults.length > 0;
       if (usedWeb && settings.webDeepRead !== false) {
+        note(`reading “${(webResults[0].title || '').slice(0, 50)}” in full…`);
         await deepReadTopResult(webResults[0], effective);
       }
     } else {
@@ -244,55 +310,138 @@ export async function answer(query, options = {}, settings = {}) {
 
   // after a permitted deep read, retrieve again so the lesson uses full pages
   const finalResult = usedWeb && settings.webDeepRead !== false
-    ? retrieve(state.chunks, state.index, effective, { topK: options.topK || 8 })
+    ? retrieve(state.chunks, state.index, effective, { topK })
     : result;
+  note(notes[2] || 'arranging your answer…');
+
+  const conversationBase = {
+    name,
+    empathy: empathyLine(parsed.raw),
+    weave: weaveFacts(facts, parsed.topicWords),
+    factConfirm,
+    thinking: notes,
+  };
 
   if (needsPermission) {
     const partial = explain({
       query: effective, result: finalResult, webResults: [], usedWeb: false,
-      webDenied: false, related: [], interests: state.interests,
-      talkative: settings.talkativeness !== 'quiet',
+      webDenied: false, related: [], interests: state.interests, talkative,
     });
-    return { mode: 'needs_permission', question: effective, explanation: partial,
-             grounded: false, citations: [] };
+    const direct = directAnswer(parsed, finalResult,
+      { pages: pagesNow(), interests: state.interests });
+    return {
+      mode: 'needs_permission', question: effective, explanation: partial,
+      conversation: conversationBase,
+      grounded: Boolean(direct && direct.found), citations: [],
+    };
   }
 
   const related = finalResult.matches[0]
-    ? relatedPages(state.chunks, queryTerms(effective), finalResult.matches[0].pageId, 3)
+    ? relatedPages(state.chunks, parsed.stemmed.length ? parsed.stemmed : queryTerms(effective),
+        finalResult.matches[0].pageId, 3)
         .map((item) => ({ title: item.title, url: item.url,
                           why: `you read this ${item.visitedAgo}` }))
     : [];
 
   const explanation = explain({
     query: effective, result: finalResult, webResults, usedWeb, webDenied,
-    related, interests: state.interests,
-    talkative: settings.talkativeness !== 'quiet',
+    related, interests: state.interests, talkative,
   });
 
-  let text = null;
-  if (intent === 'advice') {
-    text = advice(effective, state.interests, finalResult.matches);
+  // direct straight answers for when/how-many/which/did-I/recap/compare
+  const direct = directAnswer(parsed, finalResult,
+    { pages: pagesNow(), interests: state.interests });
+  if (direct) {
+    conversationBase.short = direct.text;
+    conversationBase.hedge = direct.found ? null : hedgeLine(finalResult.bestRelevance);
+    if (direct.citations.length) {
+      const seen = new Set(direct.citations.map((c) => c.url));
+      const merged = direct.citations.concat(
+        explanation.citations.filter((c) => !seen.has(c.url)));
+      merged.forEach((c, i) => { c.n = i + 1; });
+      explanation.citations = merged;
+    }
+  } else {
+    conversationBase.hedge = hedgeLine(finalResult.bestRelevance);
   }
 
+  let adviceText = null;
+  if (parsed.type === 'advice') {
+    adviceText = advice(effective, state.interests, finalResult.matches);
+  }
+
+  if (talkative) conversationBase.questionBack = questionBack(facts, state.interests, parsed);
+
+  const grounded = explanation.grounded || Boolean(direct && direct.found);
   await store.putConversation({
-    query: effective, mode: intent, grounded: explanation.grounded,
-    answer: explanation.simple || text || '',
+    query: parsed.raw, mode: parsed.type, type: parsed.type, grounded,
+    topic: parsed.topicWords.join(' '),
+    answer: (direct && direct.text) || explanation.simple || adviceText || '',
   });
 
   return {
-    mode: intent === 'advice' ? 'advice' : 'explain',
-    adviceText: text,
+    mode: parsed.type === 'advice' ? 'advice' : 'explain',
+    adviceText,
     explanation,
-    grounded: explanation.grounded,
+    conversation: conversationBase,
+    grounded,
     citations: explanation.citations,
     usedWeb,
     webDenied,
+    anaphora: parsed.anaphora,
     retrieval: {
       count: finalResult.matches.length, tookMs: finalResult.tookMs,
       bestRelevance: finalResult.bestRelevance, evidence: finalResult.evidence,
       engine: 'on-device hybrid (hash-v1 + BM25)',
     },
   };
+}
+
+function statsLine(stats) {
+  if (!stats.pages) return 'Your memory is empty so far — browse anything for a few seconds and I\'ll start learning you.';
+  return `Right now I hold ${stats.pages} page(s) and ${stats.visits || 0} visit(s) of your reading` +
+    (state.interests.length ? `, and your big theme lately is ${state.interests[0].topic}.` : '.');
+}
+
+// --- personal facts: stored in IndexedDB meta, never leave the browser -------
+
+const FACT_WORDS = new Set(['name', 'is', 'am', 'live', 'work', 'working', 'goal',
+  'dream', 'aim', 'plan', 'love', 'like', 'hate', 'dislike', 'learning', 'studying',
+  'remember', 'call', 'called', 'my', 'me']);
+
+const FACT_CONFIRM = {
+  name: (v) => `${v} — got it! I'll remember that (only inside this browser, like everything else).`,
+  learning: (v) => `Noted: you're learning ${v}. I'll angle my explanations toward that.`,
+  likes: (v) => `Okay, you love ${v} — filed under "things that make you happy".`,
+  dislikes: (v) => `Understood — ${v} is not your thing. I'll keep it in mind.`,
+  job: (v) => `Got it, you work as ${v}. I'll make answers useful for that.`,
+  lives: (v) => `Noted: you live in ${v}. (Stays in this browser, always.)`,
+  goal: (v) => `Your goal — ${v}. I'll quietly root for it in every answer.`,
+  note: (v) => `Remembered: "${truncate(v, 80)}". Ask me about it anytime.`,
+};
+
+export async function loadFacts() {
+  const rows = await store.getAllMeta();
+  const facts = { notes: [] };
+  for (const row of rows) {
+    const key = String(row.key || '');
+    if (!key.startsWith('fact:') || !row.value) continue;
+    const fact = row.value;
+    if (fact.kind === 'note') facts.notes.push(fact);
+    else facts[fact.kind] = fact;
+  }
+  return facts;
+}
+
+export async function saveFacts(statements) {
+  for (const fact of statements) {
+    const key = fact.kind === 'note'
+      ? `fact:note:${Date.now()}`
+      : `fact:${fact.kind}`;
+    await store.setMeta(key, { kind: fact.kind, value: fact.value,
+                               at: new Date().toISOString() });
+  }
+  return statements.length;
 }
 
 async function runWebSearch(query, settings) {

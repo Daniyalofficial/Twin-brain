@@ -94,6 +94,20 @@ Everything the AI knows lives in your browser:
    profile from your own reading, builds your daily recap notification
    (hard cap 5/day), and — only if you chose *Always allow web* — reads fresh
    material about your top interest.
+7. **Real-time friend.** The AI reads your message like a person, not a
+   keyword bag (`lib/brain/understand.js`): it knows question types
+   (*when / how many / which sites / did I / compare / recap / define*),
+   resolves "tell me more" and "what about that?" to the topic you were just
+   discussing, turns "today / last week" into real date windows, and asks a
+   clarifying question instead of guessing when you're vague. It remembers
+   what you tell it — "my name is Ali", "I'm learning Python", "I love
+   cricket" — stores those facts in IndexedDB (they never leave the browser),
+   greets you by name, notices frustration or deadlines, hedges honestly when
+   it's unsure, and asks *you* a question back. Direct questions get direct
+   answers ("You read “X” on Tuesday, spent 7m on it"). Answers stream into
+   the popup live: thinking notes while it searches your memory
+   ("hmm, “sourdough”… scanning 42 remembered pages…"), then a word-by-word
+   typewriter lesson (`lib/brain/persona.js` + `lib/brain/direct.js`).
 
 Run it: load `extension/` in `chrome://extensions` (Developer mode → Load
 unpacked). That's the whole install. Start `run.bat`/`run.sh` only if you want
@@ -259,8 +273,10 @@ locally so privacy keeps working while the backend is offline.
 ## Development
 
 ```bash
-./.venv/bin/python -m unittest discover -s tests -v   # 80 tests, no network needed
-node --test tests/js/                                 # 28 on-device brain tests
+./.venv/bin/python -m unittest discover -s tests -v   # 87 tests, no network needed
+node --test tests/js/                                 # 64 on-device brain tests
+                                                      # incl. full end-to-end run
+                                                      # against an in-memory IDB
 ./.venv/bin/python scripts/make_icons.py              # regenerate extension icons
 ./.venv/bin/python scripts/seed_demo.py --wipe        # demo memory
 ```

@@ -656,7 +656,16 @@ async function handleMessage(message, sender) {
     case 'tb-query': {
       const settings = await getSettings();
       try {
-        const out = await brain.answer(message.query, message.options || {}, settings);
+        // real-time: the brain narrates its thinking while it works, and the
+        // popup streams those notes into the "thinking" bubble live
+        const out = await brain.answer(message.query, message.options || {}, settings, {
+          progress: (text) => {
+            try {
+              chrome.runtime.sendMessage({ type: 'tb-thought', text },
+                () => void chrome.runtime.lastError);
+            } catch (error) { void error; }
+          }
+        });
         return Object.assign({ ok: true, local: true }, out);
       } catch (error) {
         return { ok: false, error: String(error && error.message || error) };
