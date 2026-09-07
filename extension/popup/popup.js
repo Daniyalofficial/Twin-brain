@@ -209,6 +209,18 @@ function reveal(parent, node, token) {
   return true;
 }
 
+function badgeClass(kind) {
+  if (kind === 'web') return 'warn';
+  if (kind === 'core') return 'core';
+  return 'ok';
+}
+
+function badgeLabel(kind) {
+  if (kind === 'web') return 'web';
+  if (kind === 'core') return 'knowledge core';
+  return 'memory';
+}
+
 function dwellLabel(seconds) {
   const s = Math.max(0, Math.round(Number(seconds) || 0));
   if (s < 60) return `${s}s`;
@@ -254,10 +266,14 @@ async function renderAnswerLive(node, data, query, token, streamBox) {
         const row = el('div', 'cite');
         row.appendChild(el('span', 'idx', String(citeItem.n)));
         const main = el('div', 'row');
-        const a = el('a', null, citeItem.title || citeItem.url);
-        a.href = citeItem.url; a.target = '_blank'; a.rel = 'noreferrer';
-        main.appendChild(a);
-        main.appendChild(el('span', `badge ${citeItem.kind === 'web' ? 'warn' : 'ok'}`, citeItem.kind));
+        if (citeItem.url) {
+          const a = el('a', null, citeItem.title || citeItem.url);
+          a.href = citeItem.url; a.target = '_blank'; a.rel = 'noreferrer';
+          main.appendChild(a);
+        } else {
+          main.appendChild(el('span', 'cite-title', citeItem.title || citeItem.domain || 'knowledge core'));
+        }
+        main.appendChild(el('span', `badge ${badgeClass(citeItem.kind)}`, badgeLabel(citeItem.kind)));
         main.appendChild(el('span', 'site',
           `${(citeItem.domain || '').replace(/^www\./, '')} · ${citeItem.when || ''}` +
           (citeItem.dwell ? ` · ${dwellLabel(citeItem.dwell)} on page` : '')));
@@ -381,11 +397,14 @@ async function renderAnswerLive(node, data, query, token, streamBox) {
       const row = el('div', 'cite');
       row.appendChild(el('span', 'idx', String(citeItem.n || citeItem.index)));
       const main = el('div', 'row');
-      const a = el('a', null, citeItem.title || citeItem.url);
-      a.href = citeItem.url; a.target = '_blank'; a.rel = 'noreferrer';
-      main.appendChild(a);
-      const kind = citeItem.kind === 'web' ? 'web' : 'memory';
-      main.appendChild(el('span', `badge ${kind === 'web' ? 'warn' : 'ok'}`, kind));
+      if (citeItem.url) {
+        const a = el('a', null, citeItem.title || citeItem.url);
+        a.href = citeItem.url; a.target = '_blank'; a.rel = 'noreferrer';
+        main.appendChild(a);
+      } else {
+        main.appendChild(el('span', 'cite-title', citeItem.title || citeItem.domain || 'knowledge core'));
+      }
+      main.appendChild(el('span', `badge ${badgeClass(citeItem.kind)}`, badgeLabel(citeItem.kind)));
       main.appendChild(el('span', 'site',
         `${(citeItem.domain || '').replace(/^www\./, '')} · ${citeItem.when || 'visited —'}` +
         (citeItem.dwell ? ` · ${dwellLabel(citeItem.dwell)} on page` : '')));

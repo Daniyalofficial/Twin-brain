@@ -292,3 +292,15 @@ button.ghost:hover { color: var(--text); border-color: var(--accent-dim); }
   border-top: 1px dashed var(--line); padding-top: 6px;
 }
 .msg .neural-stream.done::after { content: ''; animation: none; }
+
+/* citation from the built-in knowledge core (no URL — it lives on-device) */
+.badge.core {
+  background: rgba(124, 96, 255, 0.16);
+  color: #a98bff;
+  border-color: rgba(124, 96, 255, 0.4);
+}
+.cite .cite-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text, #e8e6f0);
+}

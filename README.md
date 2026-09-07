@@ -168,6 +168,67 @@ refines the query from the gaps and searches again (default 3 hops, daily
 budget, every hop audited) — deep-reading full pages when snippets are thin.
 Still permission-gated: `ask` / `always` / `never`.
 
+## The complete English AI tool (all offline, all built in)
+
+Three engines make the twin a fluent, talkative English companion — none of
+them need the internet, a backend, or neural training:
+
+### 1. The experience bank — thousands of chats
+`lib/brain/data/chatcorpus.js` holds **3,081 conversation turns across 88
+intents** (greetings, emotions, motivation, money, books, English practice,
+identity, fun, daily life, philosophy…). `lib/brain/fluent.js` builds its own
+BM25 index over them with a *tiny* stopword list — deliberately keeping
+"how", "good", "night", "what", the exact words short chats depend on — and
+answers through a **coverage gate**: a chitchat reply is only allowed when the
+user's meaningful words actually appear in the matched intent's experience.
+That is what separates *"i am so tired"* (warm, personal, talkative reply that
+ends with a question) from *"how does DNS recursion work"* (never hijacked
+into chitchat). Replies rotate per message hash + day, and use your name when
+the twin knows it.
+
+### 2. The built-in knowledge core — basic world knowledge, honestly labelled
+`lib/brain/data/corekb.js` ships **105 core topics in 14 categories** (how the
+internet/DNS/AI works, money and markets, science, health, history, space…) —
+the "low-level LLM" baseline every assistant is expected to know. Retrieval is
+**precision-anchored**: a built-in entry may only answer when one of your
+*meaningful* query words appears in its title or aliases (so "bread" can never
+surface "breathing"). Answers are teacher-shaped (simple version → key points
+→ why it matters) and always say so:
+
+> *From my built-in knowledge core — NOT from pages you read.*
+
+The memory honesty contract is untouched: "did **I** read about gravity?" still
+answers an honest no, even though the core knows gravity. Core answers are
+badged `knowledge core` in the popup and never disguised as your reading.
+
+### 3. The bookshelf — the books that build successful lives
+`lib/brain/data/books.js` carries **6 complete books** with original
+deep-commentary: *Think and Grow Rich* (1937), *Rich Dad Poor Dad* (1997),
+*How to Win Friends and Influence People* (1936), *The 7 Habits of Highly
+Effective People* (1989), *Atomic Habits* (2018) and — for the billionaire
+question — *Zero to One* (2014). Each book: the core idea, **10+ lessons
+explained in plain English with an action step each**, signature quotes, a
+**7-day starter plan**, and one-line summaries for the shelf view. Ask
+*"tell me about rich dad poor dad"*, *"which books should i read"*, or
+*"how do I become a billionaire"* (which gets the honest four-stage answer:
+mindset → high-income skill → ownership → leverage — plus the warning that no
+book can promise billions). All commentary is original paraphrase, never
+reproduced text.
+
+### 4. The English desk — definitions, synonyms, idioms, grammar
+`lib/brain/data/english.js`: a **429-word pocket dictionary** (meaning +
+synonyms + example sentence each), **61 idioms** explained as wholes, **352
+common typo fixes**, and **52 word upgrades** ("very happy" → "delighted").
+`lib/brain/core.js` turns it into tools: `define resilience`, `synonym for
+happy`, `meaning of piece of cake`, `correct this: i am go to school` — the
+grammar fixer explains **every** change it made ("What changed and why:"),
+teaches instead of silently editing, and `improveSentence` upgrades weak
+phrasing. A **word of the day** rotates by date. When a word genuinely isn't
+in the pocket dictionary, the desk says so — it never guesses a meaning.
+
+Tests: `tests/js/englishai.test.mjs` (21 tests) plus drift guards in
+`tests/test_ondevice_brain.py`.
+
 ## Hardened from real-world use
 
 Every one of these came from an actual conversation with the twin, and each has

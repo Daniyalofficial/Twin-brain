@@ -77,9 +77,11 @@ test('"did I read about X" answers an honest NO for unknown topics', async () =>
 });
 
 test('unknown topics with webPermission=ask trigger the permission protocol, never a fetch', async () => {
-  const out = await brain.answer('how does quantum gravity work?', {}, { webPermission: 'ask' });
+  // genuinely unknown: not in memory, not in the knowledge core, not in the
+  // experience bank — only the permission protocol may answer this
+  const out = await brain.answer('how does the zibblewump drive work?', {}, { webPermission: 'ask' });
   assert.equal(out.mode, 'needs_permission');
-  assert.equal(out.question, 'how does quantum gravity work?');
+  assert.equal(out.question, 'how does the zibblewump drive work?');
 });
 
 test('the brain remembers what you tell it about yourself', async () => {

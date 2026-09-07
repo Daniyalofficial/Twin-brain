@@ -31,6 +31,11 @@ import {
   CRISIS_RESPONSE,
 } from './policy.js';
 import { researchLoop } from './research.js';
+import { fluentReply, corpusStats } from './fluent.js';
+import {
+  coreExplain, englishToolAnswer, bookExplain, bookshelf, successAnswer,
+  coreStats, englishStats, bookStats,
+} from './core.js';
 import { searchWeb, fetchPageText } from './websearch.js';
 import {
   contentWords, queryTerms, splitSentences, stem, humanTime, fmtDuration, truncate,
@@ -277,6 +282,16 @@ export async function getModelfile(settings = {}) {
   return buildModelfile(pack, { base });
 }
 
+/** What the twin carries offline: experience bank, knowledge core, English tool, shelf. */
+export function toolStats() {
+  return {
+    chatExperience: corpusStats(),
+    knowledgeCore: coreStats(),
+    englishTool: englishStats(),
+    bookshelf: bookStats(),
+  };
+}
+
 export async function getStudyPlan(topic) {
   const key = `studyPlan:${String(topic || '').toLowerCase().trim()}`;
   return store.getMeta(key);
@@ -372,16 +387,25 @@ export async function answer(query, options = {}, settings = {}, hooks = {}) {
   // --- small talk: greetings, thanks, compliments, goodbyes ----------------
   if (parsed.type === 'smalltalk') {
     let text;
+    let usedFluent = false;
     if (parsed.compliment) text = respondToCompliment(name);
     else if (/\b(thanks|thank you|shukriya)\b/i.test(parsed.raw)) text = respondToThanks(name);
     else if (/\b(bye|goodbye|see you|khuda hafiz|good night)\b/i.test(parsed.raw)) text = farewell(name);
     else if (/^(?:hi|hey|hello|yo|sup|assalam|salam|good (?:morning|afternoon|evening))\b/i.test(parsed.raw)) {
       text = `${greeting(name)} ${statsLine(stats)}`;
     } else {
-      text = smalltalk(parsed.raw, stats, state.interests);
+      // open-ended smalltalk goes through the experience bank first: thousands
+      // of chats make better company than one canned line, and rotate daily
+      const fluentSmall = fluentReply(parsed.raw, { name, weave: weaveFacts(facts, parsed.topicWords) });
+      if (fluentSmall && fluentSmall.confidence >= 0.2) {
+        text = fluentSmall.text;
+        usedFluent = true;
+      } else {
+        text = smalltalk(parsed.raw, stats, state.interests);
+      }
     }
-    if (emotion.primary === 'joy' && talkative) text += `\n\n${humorLine(parsed.raw)}`;
-    if (talkative && !parsed.compliment) text += `\n\n${questionBack(facts, state.interests, parsed)}`;
+    if (emotion.primary === 'joy' && talkative && !usedFluent) text += `\n\n${humorLine(parsed.raw)}`;
+    if (talkative && !parsed.compliment && !usedFluent) text += `\n\n${questionBack(facts, state.interests, parsed)}`;
     await store.putConversation({ query: parsed.raw, mode: 'smalltalk', type: 'smalltalk',
                                   topic: '', answer: text });
     return { mode: 'chat', text, grounded: true, citations: [], followups: [],
@@ -412,6 +436,59 @@ export async function answer(query, options = {}, settings = {}, hooks = {}) {
                                   topic: '', answer: truncate(text, 300) });
     return { mode: 'chat', text, grounded: true, citations: [], followups: [],
              conversation: { name } };
+  }
+
+  // --- ENGLISH TOOL: definitions, synonyms, grammar — taught, not guessed --
+  if (parsed.type === 'define' || parsed.type === 'grammar' || parsed.type === 'word') {
+    const tool = englishToolAnswer(parsed, parsed.raw);
+    if (tool) {
+      const topicWord = (tool.tool && (tool.tool.word || '')) || '';
+      await store.putConversation({ query: parsed.raw, mode: 'english', type: parsed.type,
+                                    topic: topicWord, answer: truncate(tool.text, 300) });
+      return {
+        mode: 'chat', text: tool.text, grounded: true, citations: [], followups: [
+          'Word of the day', 'Give me a practice sentence', 'Correct my last message',
+        ],
+        english: true,
+        conversation: { name, empathy: empathyLine(parsed.raw), emotion: emotion.primary,
+                        tone: tone.mood },
+      };
+    }
+    // if the tool declined, fall through to the knowledge machinery below
+  }
+
+  // --- THE BOOKSHELF: one book deep-dive, the shelf, or the ambition path ---
+  if (parsed.type === 'book' && parsed.bookId) {
+    const bookOut = bookExplain(parsed.bookId);
+    if (bookOut) {
+      await store.putConversation({ query: parsed.raw, mode: 'book', type: 'book',
+                                    topic: bookOut.book.id, answer: truncate(bookOut.book.oneLine, 300) });
+      return {
+        mode: 'book', text: bookOut.text, grounded: true, book: bookOut.book.id,
+        citations: [{ n: 1, title: `"${bookOut.book.title}" — ${bookOut.book.author}`, url: '',
+                      domain: 'bookshelf', domainLabel: 'bookshelf', kind: 'core',
+                      when: 'built-in bookshelf', quote: bookOut.book.oneLine }],
+        followups: ['Give me the 7-day plan again', 'What should I read next?',
+                    'How do I apply lesson 1 today?'],
+        conversation: { name, empathy: empathyLine(parsed.raw), emotion: emotion.primary,
+                        tone: tone.mood },
+      };
+    }
+  }
+  if (parsed.type === 'books' || parsed.type === 'success') {
+    const shelfOut = parsed.type === 'success'
+      ? successAnswer(parsed.raw, { name })
+      : bookshelf(parsed.raw, { name });
+    await store.putConversation({ query: parsed.raw, mode: 'bookshelf', type: parsed.type,
+                                  topic: 'books', answer: truncate(shelfOut.text, 300) });
+    return {
+      mode: 'chat', text: shelfOut.text, grounded: true, citations: [],
+      books: shelfOut.books,
+      followups: ['Tell me about Think and Grow Rich', 'Tell me about Atomic Habits',
+                  'Which book should I read first?'],
+      conversation: { name, empathy: empathyLine(parsed.raw), emotion: emotion.primary,
+                      tone: tone.mood },
+    };
   }
 
   // --- too vague to answer honestly? ask instead of guessing ---------------
@@ -519,6 +596,45 @@ export async function answer(query, options = {}, settings = {}, hooks = {}) {
     tone: tone.mood,
     researchNote: (researchLog && !usedWeb) ? researchNote(researchLog) : null,
   };
+
+  // --- KNOWLEDGE CORE: general knowledge from my built-in library, clearly
+  // labelled as built-in (never dressed up as your reading) ------------------
+  if (!finalResult.grounded && !usedWeb && !memoryOnly && !storyMode &&
+      (parsed.type === 'knowledge' || parsed.type === 'compare' || parsed.type === 'define')) {
+    const core = coreExplain(effective, { name });
+    if (core) {
+      note('answering from my built-in knowledge core…');
+      await store.putConversation({ query: parsed.raw, mode: 'core', type: parsed.type,
+                                    topic: core.citations[0] ? core.citations[0].title : '',
+                                    answer: truncate(core.simple, 300) });
+      return {
+        mode: 'explain', source: 'core',
+        text: [core.opener, '', core.simple, '',
+               ...core.points.map((point) => `• ${point}`), '', core.honesty].join('\n'),
+        explanation: core, grounded: true, citations: core.citations,
+        usedWeb: false, followups: core.followups,
+        conversation: Object.assign({}, conversationBase, { researchNote: null }),
+      };
+    }
+  }
+
+  // --- FLUENT FALLBACK: conversational messages get the experienced friend,
+  // not a cold "I don't know" — the experience bank of thousands of chats ----
+  if (!finalResult.grounded && !usedWeb && !memoryOnly && !storyMode && !explicitWeb &&
+      parsed.type === 'knowledge') {
+    const fluent = fluentReply(parsed.raw, { name, weave: weaveFacts(facts, parsed.topicWords) });
+    if (fluent && fluent.confidence >= 0.16) {
+      await store.putConversation({ query: parsed.raw, mode: 'fluent', type: 'knowledge',
+                                    topic: fluent.intent, answer: truncate(fluent.text, 300) });
+      return {
+        mode: 'chat', text: fluent.text, grounded: false, citations: [], followups: [],
+        intent: fluent.intent,
+        conversation: Object.assign({}, conversationBase, {
+          researchNote: (researchLog && !usedWeb) ? researchNote(researchLog) : null,
+        }),
+      };
+    }
+  }
 
   if (needsPermission) {
     const partial = explain({

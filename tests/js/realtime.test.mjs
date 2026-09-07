@@ -27,7 +27,8 @@ test('question types are routed correctly', () => {
   assert.equal(questionType('how many pages about python do I have?'), 'count');
   assert.equal(questionType('which sites did I read AI news on?'), 'which_source');
   assert.equal(questionType('did I read anything about transformers?'), 'verify');
-  assert.equal(questionType('what is an embedding?'), 'define');
+  assert.equal(questionType('what is an embedding?'), 'knowledge');
+  assert.equal(questionType('define resilience'), 'define');
   assert.equal(questionType('difference between BM25 and cosine similarity'), 'compare');
   assert.equal(questionType('what did I read today?'), 'recap');
   assert.equal(questionType('should I buy a dutch oven?'), 'advice');

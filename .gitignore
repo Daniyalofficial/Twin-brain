@@ -1,5 +1,8 @@
 # --- runtime data (never commit a user's memory) ---
-data/
+# anchored to the repo root: extension/lib/brain/data/ is SOURCE (built-in
+# knowledge), not runtime memory, and must always be committed.
+/data/
+!extension/lib/brain/data/
 *.db
 *.db-wal
 *.db-shm

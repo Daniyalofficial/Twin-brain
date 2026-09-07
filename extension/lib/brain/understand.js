@@ -11,6 +11,7 @@
  *    instead of a random guess
  */
 
+import { findBook } from './data/books.js';
 import { contentWords, stem } from './text.js';
 
 const QUESTION_NOISE = new Set(['what', 'when', 'where', 'which', 'who', 'why', 'how',
@@ -31,9 +32,21 @@ const TIME_PATTERNS = [
 const ANAPHORA_START = /^(?:and|but|so|also|ok|okay|then)?[\s,]*(?:what|how|why|when|where|who|which|tell me more|more|deeper|go on|continue|interesting|really|nice|cool|hmm|elaborate|expand)\b/i;
 const PRONOUN_ONLY = /^(?:what|how|why|tell me)?\s*(?:about|of|on)?\s*(?:it|that|this|those|them|these)\s*[?.!]*$/i;
 
-const SMALLTALK_RE = /^(?:hi|hey|hello|yo|sup|assalam|salam|how are you|how's it going|good (?:morning|evening|afternoon|night)|thanks|thank you|shukriya|who are you|what are you|your name|love you|you are (?:great|awesome|amazing|cool|smart|the best)|you're (?:great|awesome|amazing|cool|smart|the best)|good bot|bye|goodbye|see you|khuda hafiz)\b/i;
+const SMALLTALK_RE = /^(?:hi|hey|hello|yo|sup|assalam|salam|how are you|how's it going|good (?:morning|evening|afternoon|night)|thanks|thank you|shukriya|who are you|what are you|your name|love you|you are (?:great|awesome|amazing|cool|smart|the best)|you're (?:great|awesome|amazing|cool|smart|the best)|good bot|bye|goodbye|see you|khuda hafiz|i (?:am|'m|feel|am feeling) (?:so |really |very |kind of |a bit )?(?:tired|sad|stressed|exhausted|lonely|angry|anxious|drained|overwhelmed|down|upset|bored)|i had (?:a |one )?(?:really |so )?(?:bad|terrible|awful|horrible|rough|hard|worst) day|today was (?:terrible|awful|bad|horrible|the worst)|everything (?:went wrong|is piling up)|nothing went right|too much (?:pressure|on my plate)|i am drowning)\b/i;
 const META_RE = /\b(?:my stats|how many pages (?:do i have|total)|my memory|what do you (?:know|hold) about me\b|your stats|brain stats)\b/i;
 const IDENTITY_RE = /\b(?:who am i|what(?:'s| is|s) my name|do you (?:know|remember) my name|my name\?|what do you (?:know|remember) about me|tell me about myself|my profile)\b/i;
+
+// --- the English tool: explicit definition / grammar / vocabulary requests ---
+const GRAMMAR_RE = /^(?:correct|fix|check|improve|rewrite|polish)\s+(?:this|it|my|the)?[\s:,\-]|^(?:grammar|correct this|fix this)\b|\bgrammar\s+(?:check|help|correct|fix|mistake)\b|\bcorrect my (?:sentence|english|grammar|paragraph)\b|\bis this (?:sentence )?(?:correct|grammatically)/i;
+const SYNONYM_RE = /\bsynonyms?\b|\banother word for\b|\bopposite of\b|\bantonyms?\b/i;
+const DEFINE_RE = /^(?:define|meaning of|whats the meaning of|what(?:'s| is) the meaning of)\b|\bwhat does\s+.+\s+means?\b|(?:\bmeans?|\bmeaning)\s*\??$/i;
+const MEANING_OF_LIFE_RE = /\bmeaning of life\b/i;
+
+// --- the bookshelf + the ambition path ---
+const SUCCESS_RE = /\b(?:billionaire|millionaire|get rich|become rich|be rich|financial freedom|make (?:a lot of |lots of |more |good )?money|earn money|build wealth|become (?:successful|wealthy)|success (?:in life|habits|secrets|tips)|how to be successful)\b/i;
+const BOOKS_RE = /\b(?:books?|novels?|reading list|bookshelf)\b/i;
+const BOOK_INTENT_RE = /\b(?:recommend|which|best|top|tell me|about|suggest|should i read|want to read|summary|explain|teach|lessons|reading)\b/i;
+const PERSONAL_RE = /\b(?:my (?:dad|father|mom|mother|mum|family|friend|boss|life)|i am|i'?m|i feel|i have|i want to be (?:a )?(?:doctor|engineer|pilot|teacher))\b/i;
 const WANTS_WEB_RE = /^(?:web|search the web|google|online)[:! ]/i;
 const WANTS_WEB_ANY_RE = /\b(?:s(?:ea|ear|e)?ar?ch|seach|serach|check|find|look(?:ing)?\s+(?:\w+\s+)?up)\s+(?:\w+\s+){0,3}?(?:on\s+|from\s+)?(?:the\s+)?(?:web|internet|online|google)\b/i;
 
@@ -88,7 +101,17 @@ export function questionType(text) {
   const s = String(text || '').trim();
   if (SMALLTALK_RE.test(s)) return 'smalltalk';
   if (IDENTITY_RE.test(s) && !/\bmy name is\b/i.test(s)) return 'identity';
+  // explicit English-tool requests route to the pocket dictionary/grammar desk
+  if (GRAMMAR_RE.test(s)) return 'grammar';
+  if (SYNONYM_RE.test(s)) return 'word';
+  if (DEFINE_RE.test(s) && !MEANING_OF_LIFE_RE.test(s)) return 'define';
   if (WANTS_WEB_RE.test(s)) return 'web';
+  // the success shelf: a named book deep-dive, a shelf question, or ambition
+  if (!PERSONAL_RE.test(s)) {
+    if (findBook(s)) return 'book';
+  }
+  if (SUCCESS_RE.test(s)) return 'success';
+  if (BOOKS_RE.test(s) && BOOK_INTENT_RE.test(s)) return 'books';
   if (/\b(?:summar[i]?[sz]e|recap)\b.*\b(?:my|today|week|day|reading)\b/i.test(s) ||
       /\bwhat (?:did|have) i read\b/i.test(s)) return 'recap';
   if (META_RE.test(s)) return 'meta';
@@ -99,7 +122,6 @@ export function questionType(text) {
   // recap BEFORE verify: "what did I read today" is a recap, not a yes/no check
   if (/\bwhat (?:did|have) i read\b|\bmy reading\b|\bsummar[i]?[sz]e\b|\brecap\b/i.test(s)) return 'recap';
   if (/\b(?:did|have) i\b|\bwas (?:it|there)\b|\bdo i (?:know|remember|have)\b|\bany(?:thing)? (?:about|on)\b/i.test(s)) return 'verify';
-  if (/\bdefine\b|\bmeaning of\b|\bwhat (?:is|are|'s)\b|\bwhat does .* mean\b/i.test(s)) return 'define';
   if (/\bshould i\b|\bwhat should\b|\badvice\b|\brecommend\b|\bbest way\b|\bworth it\b/i.test(s)) return 'advice';
   return 'knowledge';
 }
@@ -155,6 +177,7 @@ export function parseQuery(query, ctx = {}) {
   return {
     raw, type, timeRange, quoted, topicWords: [...new Set(topicWords)],
     wantsWeb: WANTS_WEB_RE.test(raw) || WANTS_WEB_ANY_RE.test(raw),
+    bookId: type === 'book' ? (findBook(raw) || {}).id || null : null,
     stemmed: [...new Set(topicWords.map(stem))],
     factStatements, anaphora, resolvedQuery, ambiguous,
     isQuestion: /\?$/.test(raw) || /^(?:what|when|where|which|who|why|how|did|do|does|is|are|was|were|can|should|could|would)\b/i.test(raw),

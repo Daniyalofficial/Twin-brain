@@ -323,3 +323,70 @@ class FieldFixTests(unittest.TestCase):
         self.assertIn("researchNote", self.popup)
         self.assertIn("dwellLabel", self.popup)
         self.assertIn("researchNote", self.brain)
+
+
+class EnglishAIWiringTests(unittest.TestCase):
+    """The complete English-AI tool stays wired and stays honest offline:
+    the experience bank of thousands of chats, the built-in knowledge core,
+    the success bookshelf, and the English desk (definitions, synonyms,
+    idioms, grammar fixing)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.brain = read("lib/brain/brain.js")
+        cls.fluent = read("lib/brain/fluent.js")
+        cls.core = read("lib/brain/core.js")
+        cls.understand = read("lib/brain/understand.js")
+        cls.corpus = read("lib/brain/data/chatcorpus.js")
+        cls.corekb = read("lib/brain/data/corekb.js")
+        cls.books = read("lib/brain/data/books.js")
+        cls.english = read("lib/brain/data/english.js")
+
+    def test_experience_bank_holds_thousands_of_chats(self):
+        self.assertGreaterEqual(self.corpus.count('"intent":"'), 3000)
+        self.assertIn("export const CHAT_CORPUS", self.corpus)
+        self.assertIn("export const CORPUS_INTENTS", self.corpus)
+
+    def test_fluent_keeps_its_own_index_and_coverage_gate(self):
+        # LexicalIndex's stopword list strips exactly the words short chats
+        # depend on ("how", "good", "night") — fluent must keep its own.
+        self.assertNotIn("lexical.js", self.fluent)
+        self.assertIn("TINY_STOP", self.fluent)
+        self.assertIn("minCoverage", self.fluent)
+        self.assertIn("GENERIC_QUERY", self.fluent)
+        self.assertIn("fluentReply", self.brain)
+
+    def test_knowledge_core_is_anchored_and_labelled_built_in(self):
+        self.assertGreaterEqual(self.corekb.count("c: '"), 100)
+        self.assertIn("anchored(", self.core)
+        self.assertIn("minScore = 1.8", self.core)
+        self.assertIn("built-in knowledge core", self.core)
+        self.assertIn("coreExplain", self.brain)
+        # honesty label reaches the user through the popup badge
+        self.assertIn("badgeClass", read("popup/popup.js"))
+        self.assertIn(".badge.core", read("popup/popup.css"))
+
+    def test_english_desk_is_wired(self):
+        self.assertIn("englishToolAnswer", self.brain)
+        for fn in ("defineWord", "synonymsFor", "fixGrammar", "improveSentence",
+                   "wordOfTheDay"):
+            self.assertIn(fn, self.core)
+        for export in ("DICTIONARY", "IDIOMS", "TYPOS", "UPGRADES"):
+            self.assertIn(f"export const {export}", self.english)
+
+    def test_bookshelf_is_wired(self):
+        self.assertIn("bookExplain", self.brain)
+        self.assertIn("successAnswer", self.brain)
+        self.assertIn("findBook", self.understand)
+        self.assertIn("BOOK_ALIASES", self.books)
+        self.assertIn("READING_PATHS", self.books)
+
+    def test_routing_adds_the_new_intents_without_stealing_personal_ones(self):
+        for fragment in ("'grammar'", "'book'", "'books'", "'success'", "PERSONAL_RE"):
+            self.assertIn(fragment, self.understand)
+
+    def test_smalltalk_stays_classic_first_with_fluent_only_for_open_ended(self):
+        self.assertIn("compliment", self.brain)
+        self.assertIn("fluentReply(parsed.raw", self.brain)
+        # the coverage gate must decide fluency, not a single confidence number
+        self.assertIn("coverage", self.fluent)
