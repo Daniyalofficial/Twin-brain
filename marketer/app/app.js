@@ -259,6 +259,7 @@ function collectOptions() {
     elementTimeoutSec: Number($('#opt-eltimeout').value) || 20,
     scrollPct: $('#opt-scrollpct').value === '' ? null : Number($('#opt-scrollpct').value),
     groups: $('#opt-groups').value.split('\n').map((s) => s.trim()).filter(Boolean),
+    coordinateMode: $('#opt-coord').checked,
   };
 }
 

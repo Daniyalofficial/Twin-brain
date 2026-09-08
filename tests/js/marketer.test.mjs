@@ -262,6 +262,32 @@ test('brain: wipe clears the local memory', async () => {
   assert.equal(after.chunks, 0);
 });
 
+test('cursor math: glide paths and wheel deltas behave like a hand', async () => {
+  const { interpolatePath, wheelDeltas, expandLoopSteps } = await import('../../marketer/lib/cursor.js');
+  const path = interpolatePath({ x: 0, y: 0 }, { x: 100, y: 50 }, 8);
+  assert.equal(path.length, 8);
+  assert.deepEqual(path[path.length - 1], { x: 100, y: 50 });
+  assert.ok(path[0].x > 0 && path[0].x < 100, 'eased start');
+  for (let i = 1; i < path.length; i += 1) assert.ok(path[i].x >= path[i - 1].x, 'monotone glide');
+
+  const deltas = wheelDeltas(0, 50, 4000, 800, 240);
+  assert.ok(deltas.length >= 6);
+  const total = deltas.reduce((a, b) => a + b, 0);
+  assert.equal(total, Math.trunc(0.5 * 3200), 'scrolls exactly half the scrollable height');
+  assert.ok(wheelDeltas(50, 50, 4000, 800).length === 0, 'no-op scroll');
+  assert.ok(wheelDeltas(80, 20, 4000, 800).every((d) => d < 0), 'up-scroll is negative');
+
+  const steps = [
+    { type: 'click' }, { type: 'loopStart' }, { type: 'write', text: 'hi {group}' },
+    { type: 'loopEnd' }, { type: 'click' },
+  ];
+  const expanded = expandLoopSteps(steps, ['g1', 'g2']);
+  assert.equal(expanded.length, 4);
+  assert.equal(expanded[1].group, 'g1');
+  assert.equal(expanded[2].group, 'g2');
+  assert.equal(expanded[2].text, 'hi {group}');
+});
+
 test('style learning: profile grows from user messages', async () => {
   const { learnFromText, styleProfile } = await import('../../marketer/lib/brain/style.js');
   await learnFromText('yaar client ko kaise convince karun ads ke liye?');

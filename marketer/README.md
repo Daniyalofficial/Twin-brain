@@ -80,12 +80,26 @@ DOM shuffle, with a text-based fallback. Recording happens on the live page:
   START/END** markers for the share-to-groups cycle;
 - **Stop & Save** stores the flow under its mode (**Branding** or **Meta**).
 
-Playback replays steps with element search timeouts, your speed multiplier and
-description source (**AI-generated**, **saved manual description**, or typed).
-Loop segments repeat once per group on your list, substituting `{group}`.
-Text is written into Facebook's React editors safely (native setters + input
-events; `execCommand`/paste for contenteditable composers). Progress streams to
-the Studio console live.
+**Two replay engines, your choice per play:**
+
+1. **Element mode (default, smart).** Finds each saved element again by selector
+   path + human hint (survives scrolling and layout shifts), clicks it, writes
+   text into Facebook's React editors safely (native setters + input events;
+   `execCommand`/paste for contenteditable composers).
+2. **🖱 Cursor mode (pyautogui-style).** Tick the checkbox in Play options and
+   the player dispatches **true input events** — eased mouseMoved glide,
+   mousePressed/mouseReleased, mouseWheel, `insertText` — at your exact saved
+   x/y coordinates through Chrome's debugger input channel. Hover states, focus
+   and handlers react like a real hand moving to each saved position and
+   clicking it. (Honest platform note: no browser extension can move your *OS*
+   mouse pointer — that is an OS-level privilege pyautogui holds outside the
+   browser; cursor mode is the closest real thing inside Chrome, and a
+   "debugging this browser" banner shows while it plays.)
+
+Both modes honour your speed multiplier, the 40-second image-pick wait, element
+timeouts, scroll percents and the description source (**AI-generated**, **saved
+manual description**, or typed). Loop segments repeat once per group on your
+list, substituting `{group}`. Progress streams to the Studio console live.
 
 Manual descriptions are savable in the library (name + text + hashtags) and
 reusable everywhere; the AI writer produces three psychology-based variants with

@@ -22,6 +22,7 @@ import { salesStats } from './brain/sales.js';
 import { corpusStats } from './brain/fluent.js';
 import { coreStats, bookStats, englishStats } from './brain/core.js';
 import { urduDataSize } from './brain/data/urdu.js';
+import { interpolatePath, wheelDeltas, expandLoopSteps } from './cursor.js';
 
 const MONITOR_ALARM = 'mt-monitor-tick';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -180,6 +181,98 @@ async function activeFacebookTab(openIfMissing) {
   return created;
 }
 
+// ------------------------------------------- pyautogui-style cursor replay
+
+/**
+ * Coordinate replay: TRUE input events at the recorded viewport positions,
+ * dispatched through Chrome's debugger input channel. The OS pointer cannot
+ * be moved by an extension (that is an OS-level privilege), but the page
+ * receives genuine mouseMoved / mousePressed / mouseWheel / insertText
+ * events — hover, focus and React handlers react exactly like a human hand,
+ * gliding step by step to every saved position.
+ */
+async function runCoordinateFlow(flow, options, tabId) {
+  const opts = { speed: 1, imageWaitSec: 40, description: '', groups: [], ...options };
+  const dbg = { tabId };
+  const send = (method, params) => chrome.debugger.sendCommand(dbg, method, params);
+  const progress = (msg, extra) => {
+    try { chrome.runtime.sendMessage({ type: 'mt-progress', msg, ...extra }); } catch { /* no listeners */ }
+  };
+  let attached = false;
+  try {
+    await chrome.debugger.attach(dbg, '1.3');
+    attached = true;
+    progress('cursor mode attached — moving to your saved positions');
+    const steps = expandLoopSteps(flow.steps || [], opts.groups);
+    let cur = { x: 500, y: 400 };
+    let lastPct = 0;
+
+    for (let i = 0; i < steps.length; i += 1) {
+      const step = steps[i];
+      const delay = Math.round((step.delayMs || 0) / Math.max(0.25, Number(opts.speed) || 1));
+      if (delay > 0) await sleep(Math.min(delay, 20000));
+      progress(`step ${i + 1}/${steps.length}: ${step.type}${step.group ? ` (${step.group})` : ''}`, { stepIndex: i });
+
+      if (step.type === 'click') {
+        const target = { x: Math.round(step.x != null ? step.x : cur.x), y: Math.round(step.y != null ? step.y : cur.y) };
+        for (const pnt of interpolatePath(cur, target, 8)) {
+          await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: pnt.x, y: pnt.y, buttons: 0 });
+          await sleep(28);
+        }
+        cur = target;
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: cur.x, y: cur.y, button: 'left', clickCount: 1 });
+        await sleep(60);
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: cur.x, y: cur.y, button: 'left', clickCount: 1 });
+      } else if (step.type === 'write') {
+        const text = String(step.text || '')
+          .replace(/\{description\}/g, opts.description || '')
+          .replace(/\{group\}/g, step.group || '');
+        if (step.x != null && step.y != null) {
+          // glide to the recorded box and click it so it takes focus
+          const target = { x: Math.round(step.x), y: Math.round(step.y) };
+          for (const pnt of interpolatePath(cur, target, 6)) {
+            await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: pnt.x, y: pnt.y, buttons: 0 });
+            await sleep(24);
+          }
+          cur = target;
+          await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: cur.x, y: cur.y, button: 'left', clickCount: 1 });
+          await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: cur.x, y: cur.y, button: 'left', clickCount: 1 });
+          await sleep(300);
+        }
+        await send('Input.insertText', { text });
+      } else if (step.type === 'wait') {
+        const ms = step.imageWait ? Number(opts.imageWaitSec) * 1000 : (step.ms || 1000);
+        progress(step.imageWait
+          ? `waiting ${opts.imageWaitSec}s for you to pick the image…`
+          : `waiting ${(ms / 1000).toFixed(1)}s…`, { stepIndex: i });
+        await sleep(ms);
+      } else if (step.type === 'scroll') {
+        const pct = opts.scrollPct != null ? Number(opts.scrollPct) : step.pct;
+        const evalRes = await send('Runtime.evaluate', {
+          expression: 'JSON.stringify({sh: document.documentElement.scrollHeight, ch: document.documentElement.clientHeight})',
+          returnByValue: true,
+        });
+        const dims = JSON.parse((evalRes && evalRes.result && evalRes.result.value) || '{"sh":0,"ch":0}');
+        for (const delta of wheelDeltas(lastPct, pct, dims.sh, dims.ch)) {
+          await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: cur.x, y: cur.y, deltaX: 0, deltaY: delta });
+          await sleep(90);
+        }
+        lastPct = pct;
+      } else {
+        progress(`skipping ${step.type}`, { stepIndex: i });
+      }
+    }
+    progress('flow complete ✔', { done: true });
+    return { ok: true };
+  } catch (error) {
+    const msg = String((error && error.message) || error);
+    progress(`cursor mode failed: ${msg}`, { error: msg });
+    return { ok: false, error: msg };
+  } finally {
+    if (attached) { try { await chrome.debugger.detach(dbg); } catch { /* already gone */ } }
+  }
+}
+
 // -------------------------------------------------------------------- router
 
 export async function handleMt(message) {
@@ -296,7 +389,13 @@ export async function handleMt(message) {
       let flow = message.flow;
       if (!flow && message.flowId) flow = await store.getFlow(message.flowId);
       if (!flow) return { ok: false, error: 'flow not found' };
-      await store.addAudit({ kind: 'flow_play', flow: flow.id, mode: flow.mode });
+      await store.addAudit({ kind: 'flow_play', flow: flow.id, mode: flow.mode,
+                             cursor: Boolean(message.options && message.options.coordinateMode) });
+      if (message.options && message.options.coordinateMode) {
+        // pyautogui-style: true input events at saved coordinates
+        runCoordinateFlow(flow, message.options, tab.id).catch(() => {});
+        return { ok: true, started: true, mode: 'coordinate', tabId: tab.id };
+      }
       // fire-and-forget: the content script broadcasts mt-progress itself, so
       // the app UI sees live step updates even if this worker naps
       chrome.tabs.sendMessage(tab.id, { type: 'mt-play', flow, options: message.options || {} })

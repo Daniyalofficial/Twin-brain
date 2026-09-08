@@ -14,7 +14,8 @@
     "contextMenus",
     "alarms",
     "notifications",
-    "webNavigation"
+    "webNavigation",
+    "debugger"
   ],
 
   "host_permissions": [
