@@ -240,6 +240,8 @@ test('emotional one-liners get the experienced friend, not "I don\'t know"', asy
   const out = await brain.answer('i am so tired of everything today', {}, NEVER);
   assert.equal(out.mode, 'chat');
   assert.ok(out.text.length > 60);
-  assert.match(out.text, /rest|tired|sleep|recovery|drained/i);
+  // replies rotate daily among the corpus' vent variants (hashPick is
+  // date-seeded), so assert the matched INTENT, not one variant's wording
+  assert.ok(['tired', 'work_vent'].includes(out.intent), `vent intent, got: ${out.intent}`);
   assert.ok(!/don't know|do not know/i.test(out.text));
 });
