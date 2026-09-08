@@ -241,7 +241,13 @@ test('emotional one-liners get the experienced friend, not "I don\'t know"', asy
   assert.equal(out.mode, 'chat');
   assert.ok(out.text.length > 60);
   // replies rotate daily among the corpus' vent variants (hashPick is
-  // date-seeded), so assert the matched INTENT, not one variant's wording
-  assert.ok(['tired', 'work_vent'].includes(out.intent), `vent intent, got: ${out.intent}`);
+  // date-seeded), so assert the reply IS one of those variants (prefix match
+  // tolerates an optional woven-memory tail), not one fixed wording
+  const { CHAT_CORPUS } = await import('../../extension/lib/brain/data/chatcorpus.js');
+  const vents = CHAT_CORPUS
+    .filter((t) => ['tired', 'work_vent'].includes(t.intent))
+    .map((t) => t.assistant.replace(/\{name\}/g, 'friend'));
+  assert.ok(vents.some((v) => out.text.startsWith(v)),
+    `reply should be a corpus vent variant, got: ${out.text.slice(0, 80)}`);
   assert.ok(!/don't know|do not know/i.test(out.text));
 });
