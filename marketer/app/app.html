@@ -223,6 +223,20 @@
     </div>
 
     <div class="card">
+      <h2>Automation &amp; cursor — how mapping and replay behave</h2>
+      <div class="grid">
+        <label>Default after-delay per step (seconds) <input type="number" id="set-auto-delay" step="0.5" min="0" max="120" value="1"></label>
+        <label>Visual cursor speed
+          <select id="set-auto-speed"><option value="slow">slow &amp; showy</option><option value="normal" selected>normal</option><option value="fast">fast</option></select>
+        </label>
+        <label>Image-pick wait default (seconds) <input type="number" id="set-auto-img" min="5" max="300" value="40"></label>
+      </div>
+      <label class="rowline"><input type="checkbox" id="set-auto-visual" checked> Show the moving visual cursor during play (glide + click ripple + typing/scrolling bubbles)</label>
+      <label class="rowline"><input type="checkbox" id="set-auto-block" checked> Block armed clicks while mapping (safer — mapped clicks never actually fire on Facebook)</label>
+      <button id="btn-save-auto" class="primary">Save automation settings</button>
+      <span class="dim" style="font-size:12px">The ⚙ button inside the Facebook mapper edits these same settings on the go.</span>
+    </div>
+    <div class="card">
       <h2>Daily learning &amp; permissions</h2>
       <div class="grid">
         <label>Web research permission

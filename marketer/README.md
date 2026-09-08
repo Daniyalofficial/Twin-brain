@@ -90,11 +90,29 @@ equivalent.)
    first, next, next…
 4. **⏹ Stop & Save** stores the flow under its mode.
 
-Positions are saved three ways at once — CSS selector path, x/y coordinates and
-a human hint (aria-label / visible text) — so replay can find them by element
-or by coordinate, even after Facebook's DOM shuffle. The same structure manager
-lives in the Studio below the play options (reorder, re-time, edit write-text,
-delete, save).
+**Precise positioning — every step is saved five ways at once:** a stable CSS
+selector (id → data-testid → name → placeholder → aria-label → href → class
+chain), the element's index-path from `<body>`, a human hint (aria-label,
+visible text, role), the viewport x/y AND the document x/y. At play time the
+target is re-found fresh, scrolled into view, and the cursor goes to where the
+element IS now — recorded coordinates are only the last-resort fallback
+(clamped into the window). That is what makes replay survive Facebook's daily
+DOM shuffle and your different window sizes.
+
+**Editing is everywhere:**
+
+- mapper panel: every step has ✎ (edit x/y, hint text, selector, write-text,
+  wait seconds, timings) and 🎯 **re-pick** (arm it, click the new place on
+  the page, the step's position is replaced);
+- Studio structure manager: same ✎ editor per step + ↑↓ reorder + 💾 save;
+- ⚙ **automation settings** (in the mapper AND Studio → Settings): default
+  after-delay, visual cursor speed (slow/normal/fast), image-wait seconds,
+  visual cursor on/off, block-armed-clicks on/off. Stored in Chrome
+  (`settings.automation`) — both play engines and the mapper read them. No
+  backend, as always.
+
+The mapper panel itself is draggable (grab its header) so it never covers the
+button you are trying to map.
 
 **Two replay engines, your choice per play:**
 

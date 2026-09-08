@@ -299,3 +299,18 @@ test('style learning: profile grows from user messages', async () => {
   assert.ok(prof.stats.urduSamples >= 2);
   assert.ok(/Roman Urdu/.test(prof.summaryText));
 });
+
+test('cursor: resolveStepTarget prefers fresh element, falls back to doc coords, clamps', async () => {
+  const { resolveStepTarget } = await import('../../marketer/lib/cursor.js');
+  // fresh element wins even when saved coords exist
+  const fresh = resolveStepTarget({ x: 10, y: 20, docY: 900 },
+    { found: true, x: 640.4, y: 300.6, scrollY: 600, vw: 1280, vh: 800 }, { w: 1280, h: 800 });
+  assert.deepEqual(fresh, { x: 640, y: 301, source: 'element' });
+  // element missing → docY minus current scroll
+  const scrolled = resolveStepTarget({ x: 10, y: 20, docY: 900 },
+    { found: false, scrollY: 600, vw: 1280, vh: 800 }, { w: 1280, h: 800 });
+  assert.deepEqual(scrolled, { x: 10, y: 300, source: 'saved' });
+  // no info at all → clamp saved viewport coords into the window
+  const clamped = resolveStepTarget({ x: -50, y: 5000 }, null, { w: 1280, h: 800 });
+  assert.deepEqual(clamped, { x: 4, y: 796, source: 'saved' });
+});

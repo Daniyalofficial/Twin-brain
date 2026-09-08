@@ -68,3 +68,29 @@ export function expandLoopSteps(steps, groups) {
   }
   return out;
 }
+
+/**
+ * resolveStepTarget — where should the cursor actually go?
+ *
+ * Positioning accuracy comes from preferring the FRESH element location (the
+ * content script re-found the element and scrolled it into view) over the
+ * stale recorded one. Fallback chain:
+ *   1. fresh element center (info.found)
+ *   2. recorded document coords (docY) minus current scroll
+ *   3. recorded viewport coords, clamped inside the viewport
+ */
+export function resolveStepTarget(step, info, viewport) {
+  const vw = (info && info.vw) || (viewport && viewport.w) || 1280;
+  const vh = (info && info.vh) || (viewport && viewport.h) || 800;
+  if (info && info.found) {
+    return { x: Math.round(info.x), y: Math.round(info.y), source: 'element' };
+  }
+  let x = step.x != null ? step.x : vw / 2;
+  let y = step.y != null ? step.y : vh / 2;
+  if (step.docY != null && info && typeof info.scrollY === 'number') {
+    y = step.docY - info.scrollY;
+  }
+  x = Math.max(4, Math.min(vw - 4, x));
+  y = Math.max(4, Math.min(vh - 4, y));
+  return { x: Math.round(x), y: Math.round(y), source: 'saved' };
+}

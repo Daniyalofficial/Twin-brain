@@ -220,6 +220,8 @@ function stepText(s) {
   return s.type;
 }
 
+let fmEditing = null;
+
 function renderFlowManager() {
   const box = $('#flow-steps');
   box.innerHTML = '';
@@ -242,30 +244,71 @@ function renderFlowManager() {
       b.onclick = fn;
       return b;
     };
-    row.appendChild(mk('↑', () => { if (i > 0) { [editSteps[i - 1], editSteps[i]] = [editSteps[i], editSteps[i - 1]]; renderFlowManager(); } }));
-    row.appendChild(mk('↓', () => { if (i < editSteps.length - 1) { [editSteps[i + 1], editSteps[i]] = [editSteps[i], editSteps[i + 1]]; renderFlowManager(); } }));
-    if (s.type === 'write') {
-      row.appendChild(mk('✎', () => {
-        const t = prompt('Edit the text to write ({description}/{group} placeholders allowed):', s.text || '');
-        if (t != null) { s.text = t; renderFlowManager(); }
-      }));
-    }
-    if (s.type === 'wait' && !s.imageWait) {
-      row.appendChild(mk('✎', () => {
-        const v = prompt('Wait seconds:', (s.ms || 1000) / 1000);
-        if (v != null) { s.ms = Math.max(0.5, Number(v) || 1) * 1000; renderFlowManager(); }
-      }));
-    }
-    row.appendChild(mk('✕', () => { editSteps.splice(i, 1); renderFlowManager(); }, 'danger'));
+    row.appendChild(mk('↑', () => { if (i > 0) { [editSteps[i - 1], editSteps[i]] = [editSteps[i], editSteps[i - 1]]; fmEditing = null; renderFlowManager(); } }));
+    row.appendChild(mk('↓', () => { if (i < editSteps.length - 1) { [editSteps[i + 1], editSteps[i]] = [editSteps[i], editSteps[i + 1]]; fmEditing = null; renderFlowManager(); } }));
+    row.appendChild(mk('✎', () => { fmEditing = fmEditing === i ? null : i; renderFlowManager(); }));
+    row.appendChild(mk('✕', () => { editSteps.splice(i, 1); fmEditing = null; renderFlowManager(); }, 'danger'));
     box.appendChild(row);
+    if (fmEditing === i) box.appendChild(buildStepEditor(s));
   });
   box.querySelectorAll('.fm-delay').forEach((inp) => {
     inp.onchange = () => { editSteps[Number(inp.dataset.i)].delayAfter = Math.max(0, Number(inp.value) || 0); };
   });
 }
 
+function buildStepEditor(s) {
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'margin:2px 0 10px 18px;padding:10px;border:1px solid var(--acc);border-radius:8px;background:rgba(79,140,255,.06)';
+  const f = [];
+  const num = (label, cls, val, step) => f.push(
+    `<label class="dim" style="font-size:11px">${label} <input class="${cls}" type="number" step="${step || 1}" value="${val == null ? '' : val}" style="width:84px;padding:3px 5px"></label>`);
+  const txt = (label, cls, val) => f.push(
+    `<label class="dim" style="font-size:11px;display:block;margin-top:5px">${label} <input class="${cls}" type="text" value="${esc(val)}" style="width:96%;padding:3px 5px"></label>`);
+  if (s.type === 'click' || s.type === 'write') {
+    num('x px', 'fm-x', s.x);
+    num('y px', 'fm-y', s.y);
+    txt('hint text (how the player re-finds it)', 'fm-hint', (s.hint && s.hint.text) || '');
+    txt('selector (advanced)', 'fm-sel', s.sel || '');
+    if (s.type === 'write') {
+      f.push(`<label class="dim" style="font-size:11px;display:block;margin-top:5px">text to write ({description}/{group} ok) <textarea class="fm-text" rows="2" style="width:96%;padding:3px 5px">${esc(s.text || '')}</textarea></label>`);
+    }
+  } else if (s.type === 'scroll') {
+    num('scroll %', 'fm-pct', s.pct);
+  } else if (s.type === 'wait') {
+    if (s.imageWait) f.push('<span class="dim" style="font-size:11px">image-pick wait — seconds come from Play options / ⚙ automation settings</span>');
+    else num('wait seconds', 'fm-ms', (s.ms || 1000) / 1000, 0.5);
+  } else {
+    f.push('<span class="dim" style="font-size:11px">Only the after-delay applies to this step.</span>');
+  }
+  wrap.innerHTML = `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">${f.join('')}</div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <button class="fm-apply primary" style="padding:4px 12px">✔ Apply to step</button>
+      <button class="fm-close" style="padding:4px 12px">Close</button>
+    </div>`;
+  wrap.querySelector('.fm-close').onclick = () => { fmEditing = null; renderFlowManager(); };
+  wrap.querySelector('.fm-apply').onclick = () => {
+    const v = (c) => { const el = wrap.querySelector(`.${c}`); return el ? el.value : undefined; };
+    const n = (c, fb) => { const x = Number(v(c)); return Number.isFinite(x) ? x : fb; };
+    if (s.type === 'click' || s.type === 'write') {
+      s.x = n('fm-x', s.x); s.y = n('fm-y', s.y);
+      const ht = v('fm-hint'); if (ht != null) { s.hint = s.hint || {}; s.hint.text = ht; }
+      const sl = v('fm-sel'); if (sl != null) s.sel = sl;
+      if (s.type === 'write') { const t = v('fm-text'); if (t != null) s.text = t; }
+    } else if (s.type === 'scroll') {
+      s.pct = Math.max(0, Math.min(100, n('fm-pct', s.pct)));
+    } else if (s.type === 'wait' && !s.imageWait) {
+      s.ms = Math.max(0.5, n('fm-ms', (s.ms || 1000) / 1000)) * 1000;
+    }
+    fmEditing = null;
+    renderFlowManager();
+    toast('Step updated — hit 💾 Save structure to keep it');
+  };
+  return wrap;
+}
+
 function selectFlow(f) {
   selectedFlow = f;
+  fmEditing = null;
   editSteps = (f.steps || []).map((s) => ({ ...s }));
   $('#play-flow-name').textContent = `— ${f.name} (${f.mode}, ${(f.steps || []).length} steps)`;
   renderFlowManager();
@@ -318,6 +361,8 @@ function collectOptions() {
     scrollPct: $('#opt-scrollpct').value === '' ? null : Number($('#opt-scrollpct').value),
     groups: $('#opt-groups').value.split('\n').map((s) => s.trim()).filter(Boolean),
     coordinateMode: $('#opt-coord').checked,
+    visualCursor: automation.visualCursor,
+    cursorSpeedMs: ({ slow: 700, normal: 420, fast: 200 })[automation.cursorSpeed] || 420,
   };
 }
 
@@ -576,6 +621,15 @@ $('#btn-wipe').onclick = async () => {
 // --------------------------------------------------------------- settings
 
 let currentSettings = {};
+let automation = { defaultDelay: 1, cursorSpeed: 'normal', visualCursor: true, blockArmedClicks: true, imageWaitSec: 40 };
+
+async function loadAutomation() {
+  try {
+    const res = await send({ type: 'tb-settings-get' });
+    Object.assign(automation, (res && res.settings && res.settings.automation) || {});
+    $('#opt-imgwait').value = automation.imageWaitSec;
+  } catch { /* first run defaults */ }
+}
 
 async function loadSettings() {
   const res = await send({ type: 'tb-settings-get' });
@@ -592,6 +646,12 @@ async function loadSettings() {
   $('#set-talk').value = s.talkativeness || 'friendly';
   $('#set-capture').checked = s.captureEnabled !== false;
   $('#set-daily').checked = s.autoEnrich !== false;
+  Object.assign(automation, s.automation || {});
+  $('#set-auto-delay').value = automation.defaultDelay;
+  $('#set-auto-speed').value = automation.cursorSpeed;
+  $('#set-auto-img').value = automation.imageWaitSec;
+  $('#set-auto-visual').checked = automation.visualCursor;
+  $('#set-auto-block').checked = automation.blockArmedClicks;
   refreshProviderChip();
 }
 
@@ -644,6 +704,19 @@ $('#btn-reset-prompt').onclick = async () => {
   $('#set-prompt').value = '';
   toast('Factory sales-master prompt restored');
 };
+$('#btn-save-auto').onclick = async () => {
+  automation = {
+    defaultDelay: Math.max(0, Number($('#set-auto-delay').value) || 0),
+    cursorSpeed: $('#set-auto-speed').value,
+    imageWaitSec: Math.max(5, Number($('#set-auto-img').value) || 40),
+    visualCursor: $('#set-auto-visual').checked,
+    blockArmedClicks: $('#set-auto-block').checked,
+  };
+  await send({ type: 'tb-settings-set', patch: { automation } });
+  $('#opt-imgwait').value = automation.imageWaitSec;
+  toast('Automation settings saved — mapper ⚙ and both play engines use them');
+};
+
 $('#btn-save-settings').onclick = async () => {
   await send({ type: 'tb-settings-set', patch: settingsPatchFromForm() });
   toast('Settings saved');
@@ -652,6 +725,7 @@ $('#btn-save-settings').onclick = async () => {
 // ------------------------------------------------------------------- boot
 
 (async function boot() {
+  await loadAutomation();
   await loadChats();
   const res = await send({ type: 'mt-stats' });
   if (res && res.ok) {
