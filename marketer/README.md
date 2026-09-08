@@ -68,17 +68,33 @@ factory act. No provider? The full built-in engine answers — nothing breaks.
 
 ## Facebook automation (the clicker)
 
-`content/fb.js` is injected on facebook.com. Because a browser extension cannot
-touch the OS mouse, "positions" are recorded as **CSS selector paths plus human
-hints** (aria-label / visible text) — the same click, found again after Facebook's
-DOM shuffle, with a text-based fallback. Recording happens on the live page:
+`content/fb.js` is injected on facebook.com.
 
-- click anywhere → step recorded with its delay;
-- panel buttons add **wait (n s)**, **image-pick wait** (uses your configured
-  seconds, default 40 — pick the photo yourself while it counts), **write** (text
-  with `{description}` / `{group}` placeholders), **scroll %**, and **loop
-  START/END** markers for the share-to-groups cycle;
-- **Stop & Save** stores the flow under its mode (**Branding** or **Meta**).
+**You watch it work:** during every play a drawn **visual cursor** glides across
+the page to each saved position, presses with a click-ripple and shows
+"typing… / scrolling / waiting" bubbles — pure DOM inside the extension, zero
+backend. (The OS pointer itself can never be moved by any extension — that is
+an OS privilege; the visual cursor + true input events are the in-browser
+equivalent.)
+
+**Mapping a flow (Start mapping → save positions one by one):**
+
+1. Hit **● Record positions** in the Branding or Meta card (each mode keeps its
+   own map; both have their own start/stop).
+2. In the mapper panel choose what you are saving next — **🖱 Click**, **🖱
+   Scroll**, **✍ Write**, **⏱ Wait**, **🖼 Image wait** or **🔁 loop mark** —
+   then click the place on Facebook. Armed clicks/scrolls/writes are captured
+   (and blocked from actually firing); normal clicks pass through.
+3. Every saved step appears in the live list with its **own timing** (seconds
+   to wait AFTER it) and **↑ ↓ reorder / ✕ delete** — you decide the structure:
+   first, next, next…
+4. **⏹ Stop & Save** stores the flow under its mode.
+
+Positions are saved three ways at once — CSS selector path, x/y coordinates and
+a human hint (aria-label / visible text) — so replay can find them by element
+or by coordinate, even after Facebook's DOM shuffle. The same structure manager
+lives in the Studio below the play options (reorder, re-time, edit write-text,
+delete, save).
 
 **Two replay engines, your choice per play:**
 

@@ -1,29 +1,33 @@
 /**
- * MarketerTwin — Facebook automation content script.
+ * MarketerTwin — Facebook automation content script (v2).
  *
- * A pyautogui-style clicker, built the only way a Chrome extension can:
- * DOM-level. Instead of screen pixels it records CSS selector paths + human
- * hints (text, aria-labels), which survive page reloads far better than raw
- * coordinates — and it can WRITE text (descriptions) directly into Facebook's
- * React editors, scroll to a percentage, and wait out the 40-second image
- * picker while you choose the photo yourself.
+ *  1. VISUAL CURSOR: a drawn pointer that glides across the page to every
+ *     saved position, presses with a ripple, and shows "typing… / scrolling /
+ *     waiting" bubbles — so you WATCH the automation move, pyautogui-style,
+ *     with zero backend: it is pure DOM inside the extension.
  *
- * Two flow modes — BRANDING and META — each with its own saved positions,
- * sharing the same timing / write / post options. Flows support loop segments
- * for the share-to-groups cycle: share → search group → open → paste → post,
- * repeated for every group on your list.
+ *  2. THE MAPPER: "Start mapping" arms one step at a time. Choose what you are
+ *     saving (🖱 click / 🖱 scroll /  write / ⏱ wait / 🖼 image-wait), click the
+ *     place on Facebook, and the step is saved with its position (selector
+ *     path + coordinates + human hint) and its own timing. The live step list
+ *     reorders (↑↓), re-times, edits and deletes — you decide the structure:
+ *     first, next, next… Branding and Meta keep separate maps.
  *
- * Also hosts the group monitor scraper: on request it snapshots the visible
- * posts of the current page so the background can diff and notify.
+ *  3. THE PLAYER: replays the map with the visual cursor + real actions
+ *     (element mode), or true debugger input events at saved coordinates
+ *     (cursor mode, orchestrated by the background). Loop segments repeat per
+ *     group; {description}/{group} placeholders fill at play time.
+ *
+ *  4. MONITOR SCRAPER: snapshots visible posts for the group watchers.
  */
 
 (() => {
   if (window.__marketerTwinFb) return;
   window.__marketerTwinFb = true;
 
-  // ------------------------------------------------------------------ utils
-
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // ------------------------------------------------------------------ utils
 
   function selectorFor(el) {
     if (!el || el === document.body || el === document.documentElement) return 'body';
@@ -51,13 +55,17 @@
   }
 
   function hintFor(el) {
-    const aria = el.getAttribute && (el.getAttribute('aria-label') || '');
+    const aria = (el.getAttribute && el.getAttribute('aria-label')) || '';
     const text = (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 60);
-    const role = el.getAttribute && el.getAttribute('role') || '';
+    const role = (el.getAttribute && el.getAttribute('role')) || '';
     return { aria, text, role, tag: el.tagName.toLowerCase() };
   }
 
-  /** Find an element by selector; fall back to its recorded human hint. */
+  function centerOf(el) {
+    const r = el.getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+  }
+
   function findStepElement(step) {
     let el = null;
     try { el = step.sel ? document.querySelector(step.sel) : null; } catch { el = null; }
@@ -69,8 +77,7 @@
     }
     if (hint.text) {
       const wanted = hint.text.toLowerCase();
-      const candidates = document.querySelectorAll(hint.tag || '*');
-      for (const c of candidates) {
+      for (const c of document.querySelectorAll(hint.tag || '*')) {
         if (c.children.length > 4) continue;
         const t = (c.innerText || c.textContent || '').trim().toLowerCase();
         if (t && (t === wanted || (t.length < 80 && t.includes(wanted)))) return c;
@@ -79,8 +86,6 @@
     return null;
   }
 
-  /** React-safe text injection: works on inputs, textareas and contenteditable
-   *  editors (Facebook's compose boxes are contenteditable/lexical). */
   function setText(el, text) {
     el.focus();
     if (el.isContentEditable) {
@@ -104,162 +109,270 @@
 
   function findComposeBox() {
     const sel = 'div[role="textbox"][contenteditable="true"], div[contenteditable="true"][aria-label], textarea[aria-label]';
-    const boxes = [...document.querySelectorAll(sel)]
-      .filter((b) => b.offsetParent !== null);
-    return boxes[0] || null;
+    return [...document.querySelectorAll(sel)].find((b) => b.offsetParent !== null) || null;
   }
 
-  function scrollToPercent(pct, el) {
-    const target = el || document.scrollingElement || document.documentElement;
+  function scrollToPercent(pct) {
+    const target = document.scrollingElement || document.documentElement;
     const max = target.scrollHeight - target.clientHeight;
     target.scrollTo({ top: Math.max(0, Math.round(max * (pct / 100))), behavior: 'smooth' });
   }
 
+  function scrollPercentNow() {
+    const t = document.scrollingElement || document.documentElement;
+    const max = t.scrollHeight - t.clientHeight;
+    return max > 0 ? Math.round((t.scrollTop / max) * 100) : 0;
+  }
+
+  // ---------------------------------------------------------- visual cursor
+
+  const cursor = (() => {
+    let root = null;
+    let arrow = null;
+    let bubble = null;
+    let pos = { x: Math.round(innerWidth / 2), y: Math.round(innerHeight / 2) };
+    let raf = 0;
+
+    function ensure() {
+      if (root && document.body.contains(root)) return;
+      root = document.createElement('div');
+      root.id = 'mt-cursor';
+      root.style.cssText = 'position:fixed;left:0;top:0;z-index:2147483647;pointer-events:none;width:26px;height:26px;margin:-2px 0 0 -3px;filter:drop-shadow(0 2px 6px rgba(0,0,0,.55));transition:none';
+      root.innerHTML = `
+        <svg width="26" height="26" viewBox="0 0 24 24">
+          <path d="M4 2 L4 19 L8.6 15.2 L11.4 21.4 L14.2 20.1 L11.4 14 L17.5 13.6 Z"
+                fill="#ffffff" stroke="#111827" stroke-width="1.4"/>
+        </svg>`;
+      bubble = document.createElement('div');
+      bubble.style.cssText = 'position:fixed;left:0;top:0;z-index:2147483647;pointer-events:none;background:#111827ee;color:#e5e7eb;font:11px/1.4 system-ui,sans-serif;border:1px solid #4f8cff;border-radius:99px;padding:3px 10px;opacity:0;transition:opacity .18s;white-space:nowrap';
+      document.body.appendChild(root);
+      document.body.appendChild(bubble);
+      arrow = root;
+      place();
+    }
+
+    function place() {
+      if (!root) return;
+      root.style.transform = `translate(${pos.x}px, ${pos.y}px)`;
+      bubble.style.transform = `translate(${pos.x + 18}px, ${pos.y + 16}px)`;
+    }
+
+    function show() { ensure(); root.style.opacity = '1'; bubble.style.opacity = bubble._on ? '1' : '0'; }
+    function hide() { if (root) { root.style.opacity = '0'; bubble.style.opacity = '0'; bubble._on = false; } }
+
+    /** eased glide, like a hand moving the mouse */
+    function moveTo(x, y, ms = 420) {
+      ensure();
+      cancelAnimationFrame(raf);
+      const from = { ...pos };
+      const to = { x, y };
+      const t0 = performance.now();
+      return new Promise((resolve) => {
+        const step = (now) => {
+          const t = Math.min(1, (now - t0) / Math.max(60, ms));
+          const e = t * t * (3 - 2 * t);
+          pos = { x: Math.round(from.x + (to.x - from.x) * e), y: Math.round(from.y + (to.y - from.y) * e) };
+          place();
+          if (t < 1) raf = requestAnimationFrame(step); else resolve();
+        };
+        raf = requestAnimationFrame(step);
+      });
+    }
+
+    function press() {
+      ensure();
+      const ring = document.createElement('div');
+      ring.style.cssText = `position:fixed;left:0;top:0;z-index:2147483646;pointer-events:none;width:34px;height:34px;margin:-17px 0 0 -17px;border:2px solid #4f8cff;border-radius:50%;transform:translate(${pos.x}px, ${pos.y}px) scale(.4);opacity:.95;transition:transform .35s ease-out, opacity .35s ease-out`;
+      document.body.appendChild(ring);
+      requestAnimationFrame(() => {
+        ring.style.transform = `translate(${pos.x}px, ${pos.y}px) scale(1.5)`;
+        ring.style.opacity = '0';
+      });
+      setTimeout(() => ring.remove(), 420);
+      root.style.transition = 'scale .12s';
+      root.style.scale = '0.82';
+      setTimeout(() => { root.style.scale = '1'; }, 130);
+    }
+
+    function label(text, ms = 900) {
+      ensure();
+      bubble.textContent = text;
+      bubble._on = true;
+      bubble.style.opacity = '1';
+      place();
+      clearTimeout(bubble._t);
+      bubble._t = setTimeout(() => { bubble.style.opacity = '0'; bubble._on = false; }, ms);
+    }
+
+    return { show, hide, moveTo, press, label };
+  })();
+
   // ---------------------------------------------------------------- recorder
 
-  const rec = { active: false, paused: false, steps: [], mode: 'branding', lastAt: 0, overlay: null };
+  const rec = { active: false, mode: 'branding', steps: [], armed: null, overlay: null, pendingWrite: null };
+
+  function stepLabel(s) {
+    if (s.type === 'click') return (s.hint && (s.hint.text || s.hint.aria)) || s.sel || 'click';
+    if (s.type === 'write') return `write: ${(s.text || '').slice(0, 34)}`;
+    if (s.type === 'scroll') return `scroll → ${s.pct}%`;
+    if (s.type === 'wait') return s.imageWait ? 'image-pick wait' : `wait ${(s.ms || 0) / 1000}s`;
+    if (s.type === 'loopStart') return '🔁 loop START';
+    if (s.type === 'loopEnd') return '🔁 loop END';
+    return s.type;
+  }
+
+  function renderRecorder() {
+    if (!rec.overlay) return;
+    const p = rec.overlay;
+    const armedHint = rec.armed
+      ? `ARMED: now click the place on Facebook to save this ${rec.armed.toUpperCase()} step.`
+      : 'Pick what to save next, then click the place on Facebook (clicks/scrolls/writes you arm are captured; normal clicks pass through).';
+    p.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <b style="color:#60a5fa">● MAPPING — ${rec.mode.toUpperCase()}</b>
+        <span>${rec.steps.length} step(s)</span>
+      </div>
+      <div style="font-size:11px;color:#9ca3af;margin-bottom:8px">${armedHint}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        <button data-arm="click">🖱 Click</button>
+        <button data-arm="scroll">🖱 Scroll</button>
+        <button data-arm="write">✍ Write</button>
+        <button data-act="wait">⏱ Wait</button>
+        <button data-act="imgwait">🖼 Image wait</button>
+        <button data-act="loop">🔁 Loop mark</button>
+      </div>
+      <div id="mt-rec-steps" style="max-height:180px;overflow-y:auto;margin:8px 0;display:flex;flex-direction:column;gap:4px"></div>
+      <div id="mt-rec-form" style="margin-top:4px"></div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button data-act="undo" style="flex:1">↩ Undo</button>
+        <button data-act="stop" style="flex:2;background:#dc2626;color:#fff;font-weight:600">⏹ Stop & Save</button>
+      </div>`;
+    p.querySelectorAll('button').forEach((b) => {
+      if (!b.style.background) b.style.cssText += ';padding:6px 9px;background:#1f2937;color:#e5e7eb;border:1px solid #374151;border-radius:6px;cursor:pointer;font-size:12px';
+      if (b.dataset.arm) b.onclick = () => { rec.armed = rec.armed === b.dataset.arm ? null : b.dataset.arm; renderRecorder(); };
+      if (b.dataset.act === 'wait') b.onclick = () => form('Wait seconds', 'number', '2', (v) => pushStep({ type: 'wait', ms: Math.max(0.5, Number(v) || 2) * 1000, delayAfter: 0.4 }));
+      if (b.dataset.act === 'imgwait') b.onclick = () => pushStep({ type: 'wait', ms: 0, imageWait: true, delayAfter: 0.5 });
+      if (b.dataset.act === 'loop') b.onclick = () => {
+        const open = rec.steps.filter((s) => s.type === 'loopStart').length > rec.steps.filter((s) => s.type === 'loopEnd').length;
+        pushStep({ type: open ? 'loopEnd' : 'loopStart', delayAfter: 0.3 });
+      };
+      if (b.dataset.act === 'undo') b.onclick = () => { rec.steps.pop(); renderRecorder(); };
+      if (b.dataset.act === 'stop') b.onclick = () => stopRecording(true);
+      if (b.dataset.arm === rec.armed) b.style.cssText += ';background:#2563eb;border-color:#2563eb;color:#fff';
+    });
+    const list = p.querySelector('#mt-rec-steps');
+    rec.steps.forEach((s, i) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:5px;background:#0b1220;border:1px solid #1f2937;border-radius:6px;padding:4px 6px;font-size:11.5px';
+      row.innerHTML = `<b style="color:#60a5fa;min-width:16px">${i + 1}</b>
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(stepLabel(s))}</span>
+        <label style="color:#9ca3af">after<input data-i="${i}" class="mt-delay" type="number" step="0.5" min="0" max="120" value="${s.delayAfter != null ? s.delayAfter : 1}" style="width:52px;padding:2px 4px;background:#111827;color:#e5e7eb;border:1px solid #374151;border-radius:4px;margin:0">s</label>`;
+      const mk = (txt, fn, title) => {
+        const b = document.createElement('button');
+        b.textContent = txt; b.title = title || '';
+        b.style.cssText = 'padding:2px 6px;background:#1f2937;color:#e5e7eb;border:1px solid #374151;border-radius:4px;cursor:pointer;font-size:11px';
+        b.onclick = fn;
+        return b;
+      };
+      row.appendChild(mk('↑', () => { if (i > 0) { [rec.steps[i - 1], rec.steps[i]] = [rec.steps[i], rec.steps[i - 1]]; renderRecorder(); } }, 'move earlier'));
+      row.appendChild(mk('↓', () => { if (i < rec.steps.length - 1) { [rec.steps[i + 1], rec.steps[i]] = [rec.steps[i], rec.steps[i + 1]]; renderRecorder(); } }, 'move later'));
+      row.appendChild(mk('✕', () => { rec.steps.splice(i, 1); renderRecorder(); }, 'delete step'));
+      list.appendChild(row);
+    });
+    list.querySelectorAll('.mt-delay').forEach((inp) => {
+      inp.onchange = () => { rec.steps[Number(inp.dataset.i)].delayAfter = Math.max(0, Number(inp.value) || 0); };
+    });
+  }
+
+  function esc(s) {
+    return String(s || '').replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
 
   function pushStep(step) {
-    const now = Date.now();
-    step.delayMs = rec.lastAt ? Math.min(30000, now - rec.lastAt) : 0;
-    rec.lastAt = now;
+    if (step.delayAfter == null) step.delayAfter = 1;
     rec.steps.push(step);
-    renderOverlay();
+    rec.armed = null;
+    renderRecorder();
+  }
+
+  function form(labelText, kind, initial, onOk) {
+    const box = rec.overlay.querySelector('#mt-rec-form');
+    const isArea = kind === 'textarea';
+    box.innerHTML = `<label style="font-size:11px;color:#9ca3af">${esc(labelText)}</label>
+      ${isArea
+        ? `<textarea id="mt-f-v" rows="3" style="width:100%;padding:5px;background:#0b1220;color:#e5e7eb;border:1px solid #374151;border-radius:6px;margin:2px 0">${esc(initial)}</textarea>`
+        : `<input id="mt-f-v" type="${kind}" value="${esc(initial)}" style="width:100%;padding:5px;background:#0b1220;color:#e5e7eb;border:1px solid #374151;border-radius:6px;margin:2px 0">`}
+      <div style="display:flex;gap:6px;margin-top:4px">
+        <button id="mt-f-ok" style="flex:1;padding:5px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer">Add step</button>
+        <button id="mt-f-no" style="flex:1;padding:5px;background:#1f2937;color:#e5e7eb;border:1px solid #374151;border-radius:6px;cursor:pointer">Cancel</button>
+      </div>`;
+    box.querySelector('#mt-f-no').onclick = () => { box.innerHTML = ''; rec.pendingWrite = null; };
+    box.querySelector('#mt-f-ok').onclick = () => {
+      const v = box.querySelector('#mt-f-v').value;
+      box.innerHTML = '';
+      onOk(v);
+    };
+    box.querySelector('#mt-f-v').focus();
   }
 
   function onClickCapture(ev) {
-    if (!rec.active || rec.paused) return;
+    if (!rec.active) return;
+    if (rec.overlay && rec.overlay.contains(ev.target)) return;
+    if (!rec.armed) return;                       // unmapped clicks pass through
+    ev.preventDefault();
+    ev.stopPropagation();
     const el = ev.target;
-    if (rec.overlay && rec.overlay.contains(el)) return;
-    const step = {
-      type: 'click', sel: selectorFor(el), hint: hintFor(el),
-      x: ev.clientX, y: ev.clientY,
-      at: new Date().toISOString(),
-    };
-    pushStep(step);
-    flash(el);
-  }
-
-  function flash(el) {
-    try {
-      const old = el.style ? el.style.outline : '';
-      if (el.style) el.style.outline = '3px solid #1877f2';
-      setTimeout(() => { if (el.style) el.style.outline = old; }, 600);
-    } catch { /* transient styling can fail on SVG etc. */ }
-  }
-
-  // ---------------------------------------------------------------- overlay
-
-  function ensureOverlay() {
-    if (rec.overlay && document.body.contains(rec.overlay)) return rec.overlay;
-    const panel = document.createElement('div');
-    panel.id = 'mt-recorder-panel';
-    panel.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:2147483647;background:#111827;color:#e5e7eb;font:13px/1.5 system-ui,sans-serif;border:1px solid #374151;border-radius:12px;padding:12px 14px;width:330px;box-shadow:0 12px 40px rgba(0,0,0,.5)';
-    document.body.appendChild(panel);
-    rec.overlay = panel;
-    return panel;
-  }
-
-  function renderOverlay() {
-    const panel = ensureOverlay();
-    const loopIn = rec.steps.filter((s) => s.type === 'loopStart').length >
-                   rec.steps.filter((s) => s.type === 'loopEnd').length;
-    panel.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-        <b style="color:#60a5fa">● REC — ${rec.mode.toUpperCase()} flow</b>
-        <span id="mt-stepcount">${rec.steps.length} steps</span>
-      </div>
-      <div style="font-size:11px;color:#9ca3af;margin-bottom:8px">
-        Click anywhere on Facebook to record a position. Use the buttons to add waits, text-writing, scrolls and the group loop.
-        ${loopIn ? '<span style="color:#fbbf24">Inside group loop 🔁</span>' : ''}
-      </div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px">
-        <button id="mt-rec-pause" style="flex:1">${rec.paused ? '▶ Resume' : '⏸ Pause'}</button>
-        <button id="mt-rec-wait" style="flex:1">⏱ Wait…</button>
-        <button id="mt-rec-imgwait" style="flex:1">🖼 Image wait</button>
-        <button id="mt-rec-write" style="flex:1">✍️ Write…</button>
-        <button id="mt-rec-scroll" style="flex:1">🖱 Scroll…</button>
-        <button id="mt-rec-loop" style="flex:1">${loopIn ? '🔁 Loop END' : '🔁 Loop START'}</button>
-        <button id="mt-rec-undo" style="flex:1">↩ Undo</button>
-        <button id="mt-rec-stop" style="flex:2;background:#dc2626;color:#fff;border-radius:6px">⏹ Stop & Save</button>
-      </div>
-      <div id="mt-rec-form" style="margin-top:8px"></div>
-    `;
-    panel.querySelectorAll('button').forEach((b) => {
-      b.style.cssText += b.id === 'mt-rec-stop' ? ';padding:6px 8px;border:none;border-radius:6px;cursor:pointer;font-weight:600' :
-        ';padding:6px 8px;background:#1f2937;color:#e5e7eb;border:1px solid #374151;border-radius:6px;cursor:pointer';
-    });
-    panel.querySelector('#mt-rec-pause').onclick = () => { rec.paused = !rec.paused; renderOverlay(); };
-    panel.querySelector('#mt-rec-wait').onclick = () => askWait();
-    panel.querySelector('#mt-rec-imgwait').onclick = () => pushStep({ type: 'wait', ms: 0, imageWait: true, label: 'image picker wait (set in options)' });
-    panel.querySelector('#mt-rec-write').onclick = () => askWrite();
-    panel.querySelector('#mt-rec-scroll').onclick = () => askScroll();
-    panel.querySelector('#mt-rec-loop').onclick = () => {
-      pushStep({ type: loopIn ? 'loopEnd' : 'loopStart' });
-    };
-    panel.querySelector('#mt-rec-undo').onclick = () => { rec.steps.pop(); renderOverlay(); };
-    panel.querySelector('#mt-rec-stop').onclick = () => stopRecording(true);
-  }
-
-  function form(html, onOk) {
-    const box = rec.overlay.querySelector('#mt-rec-form');
-    box.innerHTML = html + `<div style="display:flex;gap:6px;margin-top:6px"><button id="mt-f-ok" style="flex:1;padding:5px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer">Add</button><button id="mt-f-no" style="flex:1;padding:5px;background:#1f2937;color:#e5e7eb;border:1px solid #374151;border-radius:6px;cursor:pointer">Cancel</button></div>`;
-    box.querySelector('#mt-f-no').onclick = () => { box.innerHTML = ''; };
-    box.querySelector('#mt-f-ok').onclick = () => { if (onOk(box) !== false) box.innerHTML = ''; renderOverlay(); };
-    const input = box.querySelector('input, textarea');
-    if (input) input.focus();
-  }
-
-  function askWait() {
-    form('<label style="font-size:11px;color:#9ca3af">Wait seconds</label><input id="mt-f-sec" type="number" min="1" max="300" value="3" style="width:100%;padding:5px;background:#0b1220;color:#e5e7eb;border:1px solid #374151;border-radius:6px;margin-top:2px">',
-      (box) => {
-        const sec = Math.max(1, Number(box.querySelector('#mt-f-sec').value) || 3);
-        pushStep({ type: 'wait', ms: sec * 1000, label: `wait ${sec}s` });
+    const at = { x: ev.clientX, y: ev.clientY };
+    cursor.moveTo(at.x, at.y, 160).then(() => cursor.press());
+    if (rec.armed === 'click') {
+      pushStep({ type: 'click', sel: selectorFor(el), hint: hintFor(el), x: at.x, y: at.y });
+    } else if (rec.armed === 'scroll') {
+      pushStep({ type: 'scroll', pct: scrollPercentNow(), x: at.x, y: at.y });
+    } else if (rec.armed === 'write') {
+      rec.pendingWrite = { sel: selectorFor(el), hint: hintFor(el), x: at.x, y: at.y };
+      form('Text to write ({description} / {group} placeholders fill at play time)', 'textarea', '', (v) => {
+        if (!v.trim()) return;
+        pushStep({ type: 'write', ...rec.pendingWrite, text: v });
+        rec.pendingWrite = null;
       });
-  }
-
-  function askWrite() {
-    form('<label style="font-size:11px;color:#9ca3af">Text to write (use {description} / {group} placeholders — filled at play time)</label><textarea id="mt-f-text" rows="3" style="width:100%;padding:5px;background:#0b1220;color:#e5e7eb;border:1px solid #374151;border-radius:6px;margin-top:2px"></textarea><label style="font-size:11px;color:#9ca3af;margin-top:4px;display:block"><input id="mt-f-here" type="checkbox" checked> write into the box currently focused on the page (otherwise: last clicked element)</label>',
-      (box) => {
-        const text = box.querySelector('#mt-f-text').value;
-        if (!text.trim()) return false;
-        pushStep({ type: 'write', text, targetFocused: box.querySelector('#mt-f-here').checked });
-      });
-  }
-
-  function askScroll() {
-    form('<label style="font-size:11px;color:#9ca3af">Scroll to percent of page</label><input id="mt-f-pct" type="number" min="0" max="100" value="50" style="width:100%;padding:5px;background:#0b1220;color:#e5e7eb;border:1px solid #374151;border-radius:6px;margin-top:2px">',
-      (box) => {
-        const pct = Math.min(100, Math.max(0, Number(box.querySelector('#mt-f-pct').value) || 0));
-        pushStep({ type: 'scroll', pct, label: `scroll ${pct}%` });
-      });
+      rec.armed = null;
+      renderRecorder();
+    }
   }
 
   function startRecording(mode) {
-    rec.active = true; rec.paused = false; rec.steps = []; rec.mode = mode || 'branding'; rec.lastAt = 0;
+    rec.active = true; rec.mode = mode || 'branding'; rec.steps = []; rec.armed = null;
+    if (!rec.overlay) {
+      rec.overlay = document.createElement('div');
+      rec.overlay.id = 'mt-recorder-panel';
+      rec.overlay.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:2147483647;background:#111827f2;color:#e5e7eb;font:13px/1.5 system-ui,sans-serif;border:1px solid #374151;border-radius:12px;padding:12px 14px;width:360px;box-shadow:0 12px 40px rgba(0,0,0,.5)';
+      document.body.appendChild(rec.overlay);
+    }
     document.addEventListener('click', onClickCapture, true);
-    renderOverlay();
+    renderRecorder();
   }
 
   function stopRecording(save) {
-    rec.active = false;
+    rec.active = false; rec.armed = null;
     document.removeEventListener('click', onClickCapture, true);
     const steps = rec.steps.slice();
     if (rec.overlay) { rec.overlay.remove(); rec.overlay = null; }
     if (save && steps.length) {
-      try {
-        chrome.runtime.sendMessage({ type: 'mt-flow-recorded', mode: rec.mode, steps });
-      } catch { /* context invalidated — steps are lost with the page anyway */ }
+      try { chrome.runtime.sendMessage({ type: 'mt-flow-recorded', mode: rec.mode, steps }); } catch { /* page closing */ }
     }
   }
 
   // ------------------------------------------------------------------ player
 
   const play = { running: false, cancel: false };
-
-  function progress(msg, extra) {
-    try { chrome.runtime.sendMessage({ type: 'mt-progress', msg, ...extra }); } catch {}
-  }
+  const progress = (msg, extra) => {
+    try { chrome.runtime.sendMessage({ type: 'mt-progress', msg, ...extra }); } catch { /* none */ }
+  };
+  const delayOf = (step, speed) => {
+    const sec = step.delayAfter != null ? step.delayAfter : ((step.delayMs || 0) / 1000);
+    return Math.round((sec * 1000) / Math.max(0.25, speed));
+  };
 
   async function waitForElement(step, timeoutMs) {
     const deadline = Date.now() + timeoutMs;
@@ -271,83 +384,85 @@
     return null;
   }
 
+  function expandLoops(steps, groups) {
+    const list = (groups && groups.length) ? groups : [''];
+    const out = [];
+    let buf = null;
+    for (const step of steps) {
+      if (step.type === 'loopStart') { buf = []; continue; }
+      if (step.type === 'loopEnd') {
+        for (const g of list) for (const inner of (buf || [])) out.push({ ...inner, group: g });
+        buf = null; continue;
+      }
+      if (buf) buf.push(step); else out.push({ ...step, group: '' });
+    }
+    return out;
+  }
+
   async function runFlow(flow, options) {
     if (play.running) { progress('already playing — stop it first'); return { ok: false }; }
     play.running = true; play.cancel = false;
-    const opts = {
-      speed: 1, imageWaitSec: 40, elementTimeoutSec: 20, description: '',
-      groups: [], scrollPct: null, ...options,
-    };
-    const steps = flow.steps || [];
+    const opts = { speed: 1, imageWaitSec: 40, elementTimeoutSec: 20, description: '', groups: [], scrollPct: null, ...options };
+    const steps = expandLoops(flow.steps || [], opts.groups);
+    cursor.show();
 
-    // expand loop segments across the group list
-    const expanded = [];
-    let loopBuf = null;
-    for (const step of steps) {
-      if (step.type === 'loopStart') { loopBuf = []; continue; }
-      if (step.type === 'loopEnd') {
-        const groups = opts.groups.length ? opts.groups : [''];
-        for (const group of groups) {
-          for (const inner of loopBuf) expanded.push({ ...inner, group });
-        }
-        loopBuf = null;
-        continue;
-      }
-      if (loopBuf) loopBuf.push(step); else expanded.push({ ...step, group: '' });
-    }
+    try {
+      for (let i = 0; i < steps.length; i += 1) {
+        if (play.cancel) { progress('stopped by user', { cancelled: true }); return { ok: false, cancelled: true, step: i }; }
+        const step = steps[i];
+        progress(`step ${i + 1}/${steps.length}: ${step.type}${step.group ? ` (${step.group})` : ''}`, { stepIndex: i });
 
-    let lastWriteTarget = null;
-    for (let i = 0; i < expanded.length; i += 1) {
-      if (play.cancel) { play.running = false; return { ok: false, cancelled: true, step: i }; }
-      const step = expanded[i];
-      const delay = Math.round((step.delayMs || 0) / Math.max(0.25, opts.speed));
-      if (delay > 0) await sleep(Math.min(delay, 20000));
-      progress(`step ${i + 1}/${expanded.length}: ${step.type}${step.group ? ` (${step.group})` : ''}`, { stepIndex: i });
-
-      try {
         if (step.type === 'click') {
           const el = await waitForElement(step, opts.elementTimeoutSec * 1000);
-          if (!el) throw new Error(`element not found: ${step.hint && (step.hint.text || step.hint.aria) || step.sel}`);
+          if (!el) throw new Error(`element not found: ${(step.hint && (step.hint.text || step.hint.aria)) || step.sel}`);
+          el.scrollIntoView({ block: 'center' });
+          await sleep(200);
+          const c = centerOf(el);
+          await cursor.moveTo(c.x, c.y, 420 / opts.speed);
+          cursor.press();
+          await sleep(140);
+          el.click();
+        } else if (step.type === 'write') {
+          let text = String(step.text || '')
+            .replace(/\{description\}/g, opts.description || '')
+            .replace(/\{group\}/g, step.group || '');
+          const el = (step.sel && await waitForElement(step, opts.elementTimeoutSec * 1000)) || findComposeBox();
+          if (!el) throw new Error('no text box found to write into');
           el.scrollIntoView({ block: 'center' });
           await sleep(150);
-          el.click();
-          lastWriteTarget = el;
-        } else if (step.type === 'write') {
-          let text = String(step.text || '');
-          text = text.replace(/\{description\}/g, opts.description || '')
-                     .replace(/\{group\}/g, step.group || '');
-          const el = step.targetFocused
-            ? (findComposeBox() || lastWriteTarget)
-            : (await waitForElement(step, opts.elementTimeoutSec * 1000)) || findComposeBox();
-          if (!el) throw new Error('no text box found to write into');
+          const c = centerOf(el);
+          await cursor.moveTo(c.x, c.y, 380 / opts.speed);
+          cursor.press();
+          cursor.label(`typing ${text.length} chars…`, 1200);
+          await sleep(160);
           setText(el, text);
         } else if (step.type === 'wait') {
           const ms = step.imageWait ? opts.imageWaitSec * 1000 : (step.ms || 1000);
-          progress(step.imageWait
-            ? `waiting ${opts.imageWaitSec}s for you to pick the image…`
-            : `waiting ${(ms / 1000).toFixed(1)}s…`, { stepIndex: i });
-          // wait in slices so cancel stays responsive
+          cursor.label(step.imageWait ? `pick your image — ${opts.imageWaitSec}s` : `waiting ${(ms / 1000).toFixed(1)}s`, Math.min(ms, 4000));
+          progress(step.imageWait ? `waiting ${opts.imageWaitSec}s for you to pick the image…` : `waiting ${(ms / 1000).toFixed(1)}s…`, { stepIndex: i });
           const until = Date.now() + ms;
-          while (Date.now() < until) {
-            if (play.cancel) break;
-            await sleep(Math.min(500, until - Date.now()));
-          }
+          while (Date.now() < until) { if (play.cancel) break; await sleep(Math.min(500, until - Date.now())); }
         } else if (step.type === 'scroll') {
           const pct = opts.scrollPct != null ? opts.scrollPct : step.pct;
+          cursor.label(`scrolling to ${pct}%`, 900);
           scrollToPercent(pct);
-          await sleep(600);
+          await sleep(700);
+        } else if (step.type === 'loopStart' || step.type === 'loopEnd') {
+          // already expanded
         } else {
-          progress(`skipping unknown step type: ${step.type}`, { stepIndex: i });
+          progress(`skipping ${step.type}`, { stepIndex: i });
         }
-      } catch (err) {
-        play.running = false;
-        progress(`FAILED at step ${i + 1}: ${err.message}`, { stepIndex: i, error: err.message });
-        return { ok: false, step: i, error: err.message };
+        await sleep(delayOf(step, opts.speed));
       }
+      progress('flow complete ✔', { done: true });
+      return { ok: true };
+    } catch (err) {
+      progress(`FAILED: ${err.message}`, { error: err.message });
+      return { ok: false, error: err.message };
+    } finally {
+      play.running = false;
+      cursor.hide();
     }
-    play.running = false;
-    progress('flow complete ✔', { done: true });
-    return { ok: true };
   }
 
   // ----------------------------------------------------------------- monitor
@@ -355,7 +470,6 @@
   function scanPosts() {
     const out = [];
     const seen = new Set();
-    // Facebook post containers — several layouts exist; probe the common ones.
     const nodes = document.querySelectorAll('div[role="article"], div[data-pagelet*="FeedUnit"], div.userContentWrapper');
     for (const node of nodes) {
       const text = (node.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 500);
@@ -365,7 +479,6 @@
       const id = String(h >>> 0);
       if (seen.has(id)) continue;
       seen.add(id);
-      // author = first strong link-ish line; time = a line with time words
       const lines = text.split(' · ').slice(0, 3);
       out.push({ id, snippet: text.slice(0, 220), author: (lines[0] || '').slice(0, 80), at: new Date().toISOString() });
       if (out.length >= 40) break;
@@ -390,11 +503,22 @@
         return false;
       case 'mt-play':
         runFlow(msg.flow, msg.options).then((r) => sendResponse(r));
-        return true; // async response
+        return true;
       case 'mt-play-stop':
         play.cancel = true;
         sendResponse({ ok: true });
         return false;
+      // visual-cursor commands from the background (cursor/coordinate mode)
+      case 'mt-cursor':
+        (async () => {
+          if (msg.op === 'show') cursor.show();
+          else if (msg.op === 'hide') cursor.hide();
+          else if (msg.op === 'move') await cursor.moveTo(msg.x, msg.y, msg.ms || 420);
+          else if (msg.op === 'press') cursor.press();
+          else if (msg.op === 'label') cursor.label(msg.text || '', msg.ms || 900);
+          sendResponse({ ok: true });
+        })();
+        return true;
       case 'mt-paste-desc': {
         const box = findComposeBox();
         if (!box) { sendResponse({ ok: false, error: 'no open compose box found' }); return false; }

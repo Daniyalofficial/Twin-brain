@@ -208,24 +208,82 @@ async function loadFlows() {
   }
 }
 
-function selectFlow(f) {
-  selectedFlow = f;
-  $('#play-flow-name').textContent = `— ${f.name} (${f.mode}, ${(f.steps || []).length} steps)`;
+let editSteps = [];
+
+function stepText(s) {
+  if (s.type === 'click') return (s.hint && (s.hint.text || s.hint.aria)) || s.sel || 'click';
+  if (s.type === 'write') return `write: ${(s.text || '').slice(0, 40)}`;
+  if (s.type === 'scroll') return `scroll → ${s.pct}%`;
+  if (s.type === 'wait') return s.imageWait ? '🖼 image-pick wait' : `wait ${(s.ms || 0) / 1000}s`;
+  if (s.type === 'loopStart') return '🔁 loop START';
+  if (s.type === 'loopEnd') return '🔁 loop END';
+  return s.type;
+}
+
+function renderFlowManager() {
   const box = $('#flow-steps');
   box.innerHTML = '';
-  (f.steps || []).forEach((s, i) => {
+  box.classList.remove('dim');
+  if (!selectedFlow) return;
+  editSteps.forEach((s, i) => {
     const row = document.createElement('div');
     row.className = 'step-row';
-    const label = s.type === 'click' ? (s.hint && (s.hint.text || s.hint.aria) || s.sel || '').slice(0, 60)
-      : s.type === 'write' ? (s.text || '').slice(0, 60)
-      : s.type === 'wait' ? (s.imageWait ? 'image-pick wait (options)' : `${(s.ms || 0) / 1000}s`)
-      : s.type === 'scroll' ? `${s.pct}%`
-      : s.type;
-    row.innerHTML = `<b>${i + 1}. ${esc(s.type)}</b><span>${esc(label)}</span><span class="dim" style="margin-left:auto">${s.delayMs ? '+' + s.delayMs + 'ms' : ''}</span>`;
+    row.style.alignItems = 'center';
+    row.innerHTML = `<b>${i + 1}. ${esc(s.type)}</b>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(stepText(s))}">${esc(stepText(s))}</span>
+      <label class="dim" style="margin:0">after
+        <input data-i="${i}" class="fm-delay" type="number" step="0.5" min="0" max="300" value="${s.delayAfter != null ? s.delayAfter : 1}" style="width:64px;padding:3px 5px;margin:0">s
+      </label>`;
+    const mk = (txt, fn, cls) => {
+      const b = document.createElement('button');
+      b.textContent = txt;
+      if (cls) b.className = cls;
+      b.style.padding = '3px 8px';
+      b.onclick = fn;
+      return b;
+    };
+    row.appendChild(mk('↑', () => { if (i > 0) { [editSteps[i - 1], editSteps[i]] = [editSteps[i], editSteps[i - 1]]; renderFlowManager(); } }));
+    row.appendChild(mk('↓', () => { if (i < editSteps.length - 1) { [editSteps[i + 1], editSteps[i]] = [editSteps[i], editSteps[i + 1]]; renderFlowManager(); } }));
+    if (s.type === 'write') {
+      row.appendChild(mk('✎', () => {
+        const t = prompt('Edit the text to write ({description}/{group} placeholders allowed):', s.text || '');
+        if (t != null) { s.text = t; renderFlowManager(); }
+      }));
+    }
+    if (s.type === 'wait' && !s.imageWait) {
+      row.appendChild(mk('✎', () => {
+        const v = prompt('Wait seconds:', (s.ms || 1000) / 1000);
+        if (v != null) { s.ms = Math.max(0.5, Number(v) || 1) * 1000; renderFlowManager(); }
+      }));
+    }
+    row.appendChild(mk('✕', () => { editSteps.splice(i, 1); renderFlowManager(); }, 'danger'));
     box.appendChild(row);
   });
+  box.querySelectorAll('.fm-delay').forEach((inp) => {
+    inp.onchange = () => { editSteps[Number(inp.dataset.i)].delayAfter = Math.max(0, Number(inp.value) || 0); };
+  });
+}
+
+function selectFlow(f) {
+  selectedFlow = f;
+  editSteps = (f.steps || []).map((s) => ({ ...s }));
+  $('#play-flow-name').textContent = `— ${f.name} (${f.mode}, ${(f.steps || []).length} steps)`;
+  renderFlowManager();
   loadFlows();
 }
+
+$('#btn-flow-save').onclick = async () => {
+  if (!selectedFlow) { toast('Select a flow first'); return; }
+  const res = await send({
+    type: 'mt-flow-save',
+    flow: { id: selectedFlow.id, name: selectedFlow.name, mode: selectedFlow.mode, steps: editSteps },
+  });
+  if (res && res.ok) {
+    selectedFlow = res.flow;
+    toast('Structure saved — play uses your new order & timings');
+    loadFlows();
+  }
+};
 
 $$('.rec-start').forEach((b) => {
   b.onclick = async () => {

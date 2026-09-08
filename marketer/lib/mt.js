@@ -22,7 +22,7 @@ import { salesStats } from './brain/sales.js';
 import { corpusStats } from './brain/fluent.js';
 import { coreStats, bookStats, englishStats } from './brain/core.js';
 import { urduDataSize } from './brain/data/urdu.js';
-import { interpolatePath, wheelDeltas, expandLoopSteps } from './cursor.js';
+import { wheelDeltas, expandLoopSteps } from './cursor.js';
 
 const MONITOR_ALARM = 'mt-monitor-tick';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -191,6 +191,10 @@ async function activeFacebookTab(openIfMissing) {
  * events — hover, focus and React handlers react exactly like a human hand,
  * gliding step by step to every saved position.
  */
+function cursorMsg(tabId, payload) {
+  return chrome.tabs.sendMessage(tabId, { type: 'mt-cursor', ...payload }).catch(() => {});
+}
+
 async function runCoordinateFlow(flow, options, tabId) {
   const opts = { speed: 1, imageWaitSec: 40, description: '', groups: [], ...options };
   const dbg = { tabId };
@@ -203,23 +207,24 @@ async function runCoordinateFlow(flow, options, tabId) {
     await chrome.debugger.attach(dbg, '1.3');
     attached = true;
     progress('cursor mode attached — moving to your saved positions');
+    await cursorMsg(tabId, { op: 'show' });
     const steps = expandLoopSteps(flow.steps || [], opts.groups);
     let cur = { x: 500, y: 400 };
     let lastPct = 0;
 
     for (let i = 0; i < steps.length; i += 1) {
       const step = steps[i];
-      const delay = Math.round((step.delayMs || 0) / Math.max(0.25, Number(opts.speed) || 1));
+      const afterSec = step.delayAfter != null ? step.delayAfter : ((step.delayMs || 0) / 1000);
+      const delay = Math.round((afterSec * 1000) / Math.max(0.25, Number(opts.speed) || 1));
       if (delay > 0) await sleep(Math.min(delay, 20000));
       progress(`step ${i + 1}/${steps.length}: ${step.type}${step.group ? ` (${step.group})` : ''}`, { stepIndex: i });
 
       if (step.type === 'click') {
         const target = { x: Math.round(step.x != null ? step.x : cur.x), y: Math.round(step.y != null ? step.y : cur.y) };
-        for (const pnt of interpolatePath(cur, target, 8)) {
-          await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: pnt.x, y: pnt.y, buttons: 0 });
-          await sleep(28);
-        }
+        await cursorMsg(tabId, { op: 'move', x: target.x, y: target.y, ms: 420 });
         cur = target;
+        await cursorMsg(tabId, { op: 'press' });
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: cur.x, y: cur.y, buttons: 0 });
         await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: cur.x, y: cur.y, button: 'left', clickCount: 1 });
         await sleep(60);
         await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: cur.x, y: cur.y, button: 'left', clickCount: 1 });
@@ -230,21 +235,22 @@ async function runCoordinateFlow(flow, options, tabId) {
         if (step.x != null && step.y != null) {
           // glide to the recorded box and click it so it takes focus
           const target = { x: Math.round(step.x), y: Math.round(step.y) };
-          for (const pnt of interpolatePath(cur, target, 6)) {
-            await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: pnt.x, y: pnt.y, buttons: 0 });
-            await sleep(24);
-          }
+          await cursorMsg(tabId, { op: 'move', x: target.x, y: target.y, ms: 380 });
           cur = target;
+          await cursorMsg(tabId, { op: 'press' });
+          await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: cur.x, y: cur.y, buttons: 0 });
           await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: cur.x, y: cur.y, button: 'left', clickCount: 1 });
           await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: cur.x, y: cur.y, button: 'left', clickCount: 1 });
           await sleep(300);
         }
+        await cursorMsg(tabId, { op: 'label', text: `typing ${text.length} chars…`, ms: 1200 });
         await send('Input.insertText', { text });
       } else if (step.type === 'wait') {
         const ms = step.imageWait ? Number(opts.imageWaitSec) * 1000 : (step.ms || 1000);
         progress(step.imageWait
           ? `waiting ${opts.imageWaitSec}s for you to pick the image…`
           : `waiting ${(ms / 1000).toFixed(1)}s…`, { stepIndex: i });
+        await cursorMsg(tabId, { op: 'label', text: step.imageWait ? `pick your image — ${opts.imageWaitSec}s` : `waiting ${(ms / 1000).toFixed(1)}s`, ms: Math.min(ms, 4000) });
         await sleep(ms);
       } else if (step.type === 'scroll') {
         const pct = opts.scrollPct != null ? Number(opts.scrollPct) : step.pct;
@@ -253,6 +259,7 @@ async function runCoordinateFlow(flow, options, tabId) {
           returnByValue: true,
         });
         const dims = JSON.parse((evalRes && evalRes.result && evalRes.result.value) || '{"sh":0,"ch":0}');
+        await cursorMsg(tabId, { op: 'label', text: `scrolling to ${pct}%`, ms: 900 });
         for (const delta of wheelDeltas(lastPct, pct, dims.sh, dims.ch)) {
           await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: cur.x, y: cur.y, deltaX: 0, deltaY: delta });
           await sleep(90);
@@ -269,6 +276,7 @@ async function runCoordinateFlow(flow, options, tabId) {
     progress(`cursor mode failed: ${msg}`, { error: msg });
     return { ok: false, error: msg };
   } finally {
+    await cursorMsg(tabId, { op: 'hide' });
     if (attached) { try { await chrome.debugger.detach(dbg); } catch { /* already gone */ } }
   }
 }
