@@ -27,6 +27,22 @@ and to stay honest when it does not know something.
 > [The on-device brain](#the-on-device-brain-no-backend-needed). The Flask
 > backend below is now an *optional* mirror that powers the web dashboard.
 
+## 🆕 MarketerTwin v1.0 — the digital-marketing & Meta-Ads twin
+
+A **second, standalone extension** lives in [`marketer/`](marketer/) and ships as
+`MarketerTwin-v1.0.zip`: an AI marketing brain (Meta Ads expert, sales-psychology
+master, English + Roman Urdu, 5,148 built-in chat turns, 80 marketing topics,
+56 sales tactics with ready scripts, six marketing books taught in full), a
+Facebook **click-position recorder/player** for posting & share-to-groups flows
+(Branding + Meta modes, 40-second image waits, saved manual descriptions),
+**group monitors** that watch Facebook groups on an interval, multi-chat memory,
+style learning, daily budgeted web learning, and an optional OpenAI-compatible
+API mode driven by a pre-made sales-master system prompt. **No server, no
+localhost** — one IndexedDB inside Chrome. Load it via `chrome://extensions` →
+*Load unpacked*. Full manual: [marketer/README.md](marketer/README.md).
+
+---
+
 ## Quickstart (optional backend + dashboard)
 
 ```bash

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --bg:#0b1020; --panel:#111a30; --line:#1e2a45; --text:#e6ebf5; --dim:#8b96ad; --acc:#4f8cff; --danger:#ef4444; }
+  * { box-sizing: border-box; }
+  body { width: 360px; margin: 0; background: var(--bg); color: var(--text);
+         font: 13px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display:flex; gap:8px; align-items:center; padding:10px 12px; border-bottom:1px solid var(--line); }
+  header img { width:26px; height:26px; border-radius:7px; }
+  header b { font-size:13px; }
+  .chip { font-size:10px; color:#22c55e; border:1px solid var(--line); border-radius:99px; padding:1px 7px; }
+  .dim { color: var(--dim); }
+  #log { max-height: 250px; overflow-y:auto; padding: 8px 12px; display:flex; flex-direction:column; gap:8px; }
+  .m { padding:7px 10px; border-radius:10px; white-space:pre-wrap; word-break:break-word; font-size:12.5px; }
+  .u { align-self:flex-end; background:var(--acc); color:#fff; max-width:88%; }
+  .t { align-self:flex-start; background:var(--panel); border:1px solid var(--line); max-width:92%; }
+  .t .meta { display:block; font-size:9.5px; color:var(--dim); text-transform:uppercase; letter-spacing:.05em; margin-bottom:3px; }
+  #composer { display:flex; gap:6px; padding:8px 12px; border-top:1px solid var(--line); }
+  textarea { flex:1; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:7px 8px; font:inherit; resize:none; }
+  button { background:#1a2540; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:7px 10px; cursor:pointer; font:inherit; }
+  button:hover { border-color:var(--acc); }
+  button.primary { background:var(--acc); border-color:var(--acc); color:#fff; font-weight:600; }
+  #actions { display:grid; grid-template-columns:1fr 1fr; gap:6px; padding:8px 12px; border-top:1px solid var(--line); }
+  #actions button { font-size:11.5px; padding:7px 6px; }
+  #fb-actions { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; padding:0 12px 8px; }
+  #fb-actions button { font-size:11px; }
+  .hidden { display:none !important; }
+  footer { padding:6px 12px 10px; text-align:center; }
+  footer a { color:var(--acc); font-size:11.5px; cursor:pointer; text-decoration:none; }
+</style>
+</head>
+<body>
+<header>
+  <img src="../icons/icon-48.png" alt="">
+  <div><b>MarketerTwin</b><br><span class="chip" id="chip">built-in engine</span></div>
+  <button id="btn-pause" style="margin-left:auto;font-size:11px" title="Pause/resume memory capture">⏸</button>
+</header>
+<div id="log"></div>
+<div id="composer">
+  <textarea id="q" rows="2" placeholder="Meta Ads, sales scripts, branding — English ya Roman Urdu…"></textarea>
+  <button id="ask" class="primary">➤</button>
+</div>
+<div id="fb-actions" class="hidden">
+  <button id="fb-rec" title="Record clicks on this Facebook tab">● Record</button>
+  <button id="fb-stop" title="Stop recording">■ Stop</button>
+  <button id="fb-play" title="Play the selected flow from the Studio">▶ Play last</button>
+</div>
+<div id="actions">
+  <button id="btn-studio" class="primary">🖥 Open MarketerTwin Studio</button>
+  <button id="btn-analyze">🧠 Analyze this page</button>
+  <button id="btn-desc">✍️ Description writer</button>
+  <button id="btn-newchat">＋ New chat</button>
+</div>
+<footer><a id="btn-memory">memory &amp; settings</a> <span class="dim">· Alt+Shift+M opens the studio</span></footer>
+<script src="popup.js" type="module"></script>
+</body>
+</html>
