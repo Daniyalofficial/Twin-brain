@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Twin-Brain</title>
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <img src="../icons/icon-48.png" alt="" width="20" height="20">
+    <span>Twin-Brain</span>
+    <span id="status-dot" class="dot dot-unknown" title="checking backend…"></span>
+  </div>
+  <div class="topbar-actions">
+    <button id="btn-pause" class="icon-btn" title="Pause / resume capture (Alt+Shift+P)">
+      <span id="pause-label">⏸</span>
+    </button>
+    <button id="btn-options" class="icon-btn" title="Settings">⚙</button>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" data-tab="ask">Ask</button>
+  <button class="tab" data-tab="today">Today</button>
+  <button class="tab" data-tab="sites">Sites</button>
+</nav>
+
+<!-- ============================ ASK ============================ -->
+<section class="panel active" id="panel-ask">
+  <div id="messages" class="messages" aria-live="polite">
+    <div class="empty" id="empty-state">
+      <p><strong>Ask your own memory.</strong></p>
+      <p class="muted">Answers come only from pages you actually read — every claim
+      carries the page title, the site and the date, so you can check it.</p>
+      <div id="suggestions" class="chips"></div>
+    </div>
+  </div>
+
+  <div id="sources-bar" class="sources-bar hidden"></div>
+
+  <form id="ask-form" class="composer">
+    <textarea id="ask-input" rows="1" placeholder="What did I read about…?"
+              autocomplete="off" spellcheck="true"></textarea>
+    <div class="composer-row">
+      <label class="web-toggle" title="Always allow web lookups. Off = the AI asks you first, every time.">
+        <input type="checkbox" id="web-toggle"> web
+      </label>
+      <select id="style" title="Answer style">
+        <option value="concise">concise</option>
+        <option value="detailed">detailed</option>
+        <option value="bullet">bullets</option>
+      </select>
+      <button type="submit" id="ask-send" class="primary">Ask</button>
+    </div>
+  </form>
+</section>
+
+<!-- ============================ TODAY ============================ -->
+<section class="panel" id="panel-today">
+  <div class="panel-head">
+    <span id="today-count" class="muted">loading…</span>
+    <button id="btn-refresh" class="ghost">refresh</button>
+  </div>
+  <div id="today-list" class="list"></div>
+</section>
+
+<!-- ============================ SITES ============================ -->
+<section class="panel" id="panel-sites">
+  <div class="panel-head">
+    <input id="site-filter" type="search" placeholder="filter sites…">
+    <button id="btn-all-sites" class="ghost">all</button>
+  </div>
+  <p class="hint">Uncheck a site to stop the AI reading it — or block it entirely so
+  nothing at all is recorded.</p>
+  <div id="site-list" class="list"></div>
+</section>
+
+<footer class="statusbar">
+  <span id="counts">–</span>
+  <span id="queue" class="muted"></span>
+  <a id="dashboard-link" href="#" target="_blank" rel="noreferrer">dashboard ↗</a>
+</footer>
+
+<div id="toast" class="toast hidden"></div>
+<script type="module" src="popup.js"></script>
+</body>
+</html>

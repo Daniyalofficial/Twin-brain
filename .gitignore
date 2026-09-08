@@ -1,0 +1,41 @@
+# --- runtime data (never commit a user's memory) ---
+# anchored to the repo root: extension/lib/brain/data/ is SOURCE (built-in
+# knowledge), not runtime memory, and must always be committed.
+/data/
+!extension/lib/brain/data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+token.txt
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- node ---
+node_modules/
+
+# --- env / secrets ---
+.env
+.env.local
+*.key
+
+# --- os / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# --- build artifacts ---
+dist/
+build/
+out/

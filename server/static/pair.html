@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Twin-Brain — connect the extension</title>
+<link rel="icon" type="image/png" href="/ui/icon-48.png">
+<link rel="stylesheet" href="/ui/app.css">
+<style>
+  .pair-card { max-width: 620px; margin: 7vh auto; }
+  .token-box {
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; word-break: break-all;
+    background: #0b1017; border: 1px dashed var(--accent-dim); border-radius: 10px;
+    padding: 12px 14px; margin: 12px 0; color: var(--accent);
+  }
+  ol li { margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<div class="card pair-card">
+  <div class="logo" style="padding-bottom:10px">
+    <img src="/ui/icon-48.png" width="34" height="34" alt="">
+    <div><b style="font-size:17px">Connect the extension</b>
+      <small class="muted">one-time, on this machine only</small></div>
+  </div>
+
+  <p class="note">The browser extension and this backend share one access token. Because you
+  opened this page from the backend itself, the token can be handed over automatically.</p>
+
+  <div class="token-box hidden" id="token-box"></div>
+
+  <div class="toolbar">
+    <button class="primary" id="copy-btn">Copy token</button>
+    <a class="ghost" href="/" id="dash-btn">Open the dashboard</a>
+  </div>
+
+  <ol class="note" style="margin-top:16px">
+    <li>Click the Twin-Brain icon in your browser toolbar → the gear → <b>Connection</b>.</li>
+    <li>Press <b>auto-fill</b> there: the extension asks this backend for the token and saves it.</li>
+    <li>If auto-fill is disabled (<code>AUTO_PAIR=false</code>), paste the token above instead.</li>
+  </ol>
+
+  <p class="note" id="status"></p>
+</div>
+
+<script>
+(async () => {
+  const statusEl = document.getElementById('status');
+  const box = document.getElementById('token-box');
+  const copy = document.getElementById('copy-btn');
+  let token = '';
+
+  try {
+    const res = await fetch('/api/token');
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.token) {
+      token = data.token;
+      box.textContent = token;
+      box.classList.remove('hidden');
+      statusEl.textContent = 'This page was served by your own backend, so handing the token over here is safe. Never paste it into any other site.';
+    } else {
+      statusEl.textContent = `Automatic pairing is off (${data.error || 'pairing disabled'}). Read the token from data/token.txt and paste it into the extension settings.`;
+      copy.disabled = true;
+    }
+  } catch (error) {
+    statusEl.textContent = `Could not talk to the backend: ${error}`;
+    copy.disabled = true;
+  }
+
+  copy.addEventListener('click', async () => {
+    if (!token) return;
+    try {
+      await navigator.clipboard.writeText(token);
+      statusEl.textContent = 'Copied. Paste it into the extension if auto-fill is off.';
+    } catch {
+      box.classList.remove('hidden');
+      statusEl.textContent = 'Clipboard blocked — select and copy the token above manually.';
+    }
+  });
+})();
+</script>
+</body>
+</html>

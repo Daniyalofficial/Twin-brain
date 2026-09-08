@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MarketerTwin Studio</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<nav id="side">
+  <div class="brand">
+    <img src="../icons/icon-48.png" alt="">
+    <div><b>MarketerTwin</b><span id="provider-chip" class="chip">built-in engine</span></div>
+  </div>
+  <button class="nav active" data-view="chat">💬 Chat</button>
+  <button class="nav" data-view="automate">🖱 Automate (FB)</button>
+  <button class="nav" data-view="descriptions">✍️ Descriptions</button>
+  <button class="nav" data-view="monitors">👀 Group Monitors</button>
+  <button class="nav" data-view="memory">🧠 Memory</button>
+  <button class="nav" data-view="settings">⚙️ Settings &amp; API</button>
+  <div id="side-stats" class="dim"></div>
+</nav>
+
+<main>
+  <!-- ============================ CHAT ============================ -->
+  <section id="view-chat" class="view active">
+    <aside id="chat-list">
+      <button id="btn-new-chat" class="primary full">＋ New chat</button>
+      <div id="threads"></div>
+    </aside>
+    <div id="chat-main">
+      <div id="messages"></div>
+      <div id="chips"></div>
+      <div id="composer">
+        <textarea id="chat-input" rows="2" placeholder="Ask anything — Meta Ads, sales scripts, branding… English ya Roman Urdu"></textarea>
+        <div class="row">
+          <label class="dim"><input type="checkbox" id="use-web"> allow web research for this question</label>
+          <button id="btn-send" class="primary">Send ➤</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================== AUTOMATE ========================== -->
+  <section id="view-automate" class="view">
+    <h1>Facebook automation — the pyautogui-style clicker</h1>
+    <p class="dim">Record your clicks on Facebook (positions are saved as element paths — they survive reloads), add waits, text-writing, scrolls and a group loop, then replay with your options. Two modes keep separate position sets: <b>Branding</b> (organic post + share to groups) and <b>Meta</b> (Ads Manager flows).</p>
+
+    <div class="modes">
+      <div class="mode-card" id="mode-branding">
+        <h2>🎨 Branding mode</h2>
+        <p class="dim">Page post → image → description → post → share → groups loop.</p>
+        <div class="row">
+          <button class="primary rec-start" data-mode="branding">● Record positions</button>
+          <button class="rec-stop danger" data-mode="branding">■ Stop</button>
+        </div>
+        <div id="flows-branding" class="flow-list"></div>
+      </div>
+      <div class="mode-card" id="mode-meta">
+        <h2>📊 Meta mode</h2>
+        <p class="dim">Ads Manager sequences: create campaign → ad set → ad → publish.</p>
+        <div class="row">
+          <button class="primary rec-start" data-mode="meta">● Record positions</button>
+          <button class="rec-stop danger" data-mode="meta">■ Stop</button>
+        </div>
+        <div id="flows-meta" class="flow-list"></div>
+      </div>
+    </div>
+
+    <div class="card" id="play-panel">
+      <h2>Play options <span class="dim" id="play-flow-name">(select a flow above)</span></h2>
+      <div class="grid">
+        <label>Speed multiplier <input type="number" id="opt-speed" value="1" min="0.25" max="4" step="0.25"></label>
+        <label>Image-pick wait (seconds) <input type="number" id="opt-imgwait" value="40" min="5" max="300"></label>
+        <label>Element search timeout (s) <input type="number" id="opt-eltimeout" value="20" min="3" max="120"></label>
+        <label>Scroll-to percent (blank = recorded) <input type="number" id="opt-scrollpct" min="0" max="100" placeholder="recorded"></label>
+      </div>
+      <label>Description source
+        <select id="opt-desc-source">
+          <option value="none">— no text (flow has its own write steps) —</option>
+          <option value="ai">AI-generated (psychology-based)</option>
+          <option value="saved">Saved manual description</option>
+          <option value="custom">Type custom now</option>
+        </select>
+      </label>
+      <div id="desc-ai-box" class="hidden grid">
+        <label>Business name <input id="gen-business" placeholder="Glow Salon"></label>
+        <label>Niche <input id="gen-niche" placeholder="salon"></label>
+        <label>City <input id="gen-city" placeholder="Lahore"></label>
+        <label>Offer <input id="gen-offer" placeholder="20% off bridal bookings"></label>
+        <label>Language <select id="gen-lang"><option value="auto">Auto (match my style)</option><option value="en">English</option><option value="ur">Roman Urdu</option></select></label>
+        <label>Kind <select id="gen-kind"><option value="general">General</option><option value="sale">Sale / offer</option><option value="festival">Festival / seasonal</option><option value="ads">Ads education</option></select></label>
+        <button id="btn-gen-desc" class="primary">Generate 3 variants</button>
+      </div>
+      <div id="gen-results"></div>
+      <select id="opt-desc-saved" class="hidden"></select>
+      <textarea id="opt-desc-custom" class="hidden" rows="4" placeholder="Type the description to write…"></textarea>
+      <label class="rowline"><input type="checkbox" id="opt-coord" style="width:auto"> 🖱 pyautogui-style cursor mode — the mouse glides to each saved position and really clicks it (true input events; a "debugging" banner shows while playing)</label>
+      <label>Groups for the share loop (one per line — {group} placeholders get these)
+        <textarea id="opt-groups" rows="3" placeholder="Lahore Buy & Sell&#10;DHA Marketplace"></textarea>
+      </label>
+      <div class="row">
+        <button id="btn-play" class="primary big">▶ Play flow</button>
+        <button id="btn-play-stop" class="danger">■ Stop playing</button>
+      </div>
+      <pre id="play-log" class="log"></pre>
+    </div>
+
+    <div class="card">
+      <h2>Flow structure manager <button id="btn-flow-save" class="primary" style="float:right">💾 Save structure</button></h2>
+      <p class="dim" style="font-size:12px">Your map, your order: move steps ↑↓, set the wait AFTER each step (seconds), edit write-text, delete — then save. This is the "first, then next, then next" structure for both Branding and Meta flows.</p>
+      <div id="flow-steps" class="dim">Select a flow (▶ next to it above) to manage its steps.</div>
+    </div>
+  </section>
+
+  <!-- ========================= DESCRIPTIONS ======================== -->
+  <section id="view-descriptions" class="view">
+    <h1>Description library + AI writer</h1>
+    <p class="dim">Saved manual descriptions are reusable in every flow ("auto-paste saved description"). The AI writer composes psychology-based posts from your details — hook, problem, offer, proof, urgency, CTA, hashtags — in English or Roman Urdu.</p>
+    <div class="split">
+      <div class="card">
+        <h2>Saved descriptions</h2>
+        <div id="desc-list"></div>
+        <h3>Save current text</h3>
+        <input id="dl-name" placeholder="Name (e.g. Salon Eid offer)">
+        <textarea id="dl-text" rows="5" placeholder="Description text…"></textarea>
+        <input id="dl-hashtags" placeholder="#hashtags (optional)">
+        <button id="btn-desc-save" class="primary">Save to library</button>
+      </div>
+      <div class="card">
+        <h2>AI writer</h2>
+        <div class="grid">
+          <label>Business <input id="w-business"></label>
+          <label>Niche <input id="w-niche"></label>
+          <label>City <input id="w-city"></label>
+          <label>Offer <input id="w-offer"></label>
+          <label>Price (optional) <input id="w-price"></label>
+          <label>Audience (optional) <input id="w-audience"></label>
+          <label>Kind <select id="w-kind"><option value="general">General</option><option value="sale">Sale / offer</option><option value="festival">Festival</option><option value="ads">Ads education</option></select></label>
+          <label>Language <select id="w-lang"><option value="auto">Auto</option><option value="en">English</option><option value="ur">Roman Urdu</option></select></label>
+        </div>
+        <button id="btn-write" class="primary">✍️ Generate descriptions</button>
+        <div id="w-results"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================== MONITORS =========================== -->
+  <section id="view-monitors" class="view">
+    <h1>Facebook group monitors</h1>
+    <p class="dim">Add group/page links and an interval (e.g. 5 minutes). MarketerTwin opens the link in a background tab on schedule, scrapes the visible posts, diffs against the last snapshot and notifies you when something new appeared. All snapshots stay in your Chrome database.</p>
+    <div class="card">
+      <h2>Add monitor</h2>
+      <div class="grid">
+        <label>Name <input id="mon-name" placeholder="Lahore Buy & Sell"></label>
+        <label>Facebook group/page URL <input id="mon-url" placeholder="https://www.facebook.com/groups/…"></label>
+        <label>Check every (minutes) <input type="number" id="mon-interval" value="5" min="1" max="1440"></label>
+      </div>
+      <button id="btn-mon-add" class="primary">Add monitor</button>
+    </div>
+    <div id="mon-list"></div>
+  </section>
+
+  <!-- ============================ MEMORY ============================ -->
+  <section id="view-memory" class="view">
+    <h1>Memory — everything remembered</h1>
+    <p class="dim">Pages you browsed and analyzed, web research the twin did for you, monitor snapshots, chat memories and your learned writing style. Nothing leaves Chrome.</p>
+    <div class="card"><h2>Brain stats</h2><div id="mem-stats" class="dim">loading…</div></div>
+    <div class="card"><h2>Your style profile (derived statistics)</h2><div id="mem-style" class="dim">Chat a little and I will learn how you write.</div></div>
+    <div class="card">
+      <h2>Remembered pages</h2>
+      <div class="row"><button id="btn-pages-refresh">Refresh</button></div>
+      <div id="mem-pages"></div>
+    </div>
+    <div class="card">
+      <h2>Activity tail (audit)</h2>
+      <div id="mem-audit"></div>
+    </div>
+    <div class="card danger-zone">
+      <h2>Export / wipe</h2>
+      <div class="row">
+        <button id="btn-export" class="primary">⬇ Export everything (JSON)</button>
+        <button id="btn-wipe" class="danger">🗑 Wipe all memory (type WIPE)</button>
+      </div>
+      <p class="dim">Export downloads a JSON backup of every store. Wipe deletes pages, chunks, conversations, flows, descriptions and monitors — settings survive.</p>
+    </div>
+  </section>
+
+  <!-- =========================== SETTINGS =========================== -->
+  <section id="view-settings" class="view">
+    <h1>Settings &amp; AI provider</h1>
+
+    <div class="card">
+      <h2>AI provider — run the twin on a real LLM, our extension way</h2>
+      <p class="dim">Point MarketerTwin at any OpenAI-compatible endpoint (OpenAI, Groq, DeepSeek, OpenRouter, Gemini-compat proxies, LM Studio…). The extension sends the pre-made <b>sales-master system prompt</b> below plus your retrieved memory — the model answers as your twin. Without a provider, the full built-in engine answers (5,148 chat experiences, 80 marketing topics, 56 sales tactics, 6 books) — nothing breaks, ever.</p>
+      <div class="grid">
+        <label>Backend
+          <select id="set-backend">
+            <option value="builtin">Built-in engine only (offline)</option>
+            <option value="openai">OpenAI-compatible API</option>
+            <option value="auto">Auto (try API, fall back built-in)</option>
+          </select>
+        </label>
+        <label>Base URL <input id="set-baseurl" placeholder="https://api.openai.com/v1"></label>
+        <label>API key <input id="set-apikey" type="password" placeholder="sk-…"></label>
+        <label>Model <input id="set-model" placeholder="gpt-4o-mini"></label>
+      </div>
+      <div class="row">
+        <button id="btn-save-api" class="primary">Save provider</button>
+        <button id="btn-test-api">Test connection</button>
+        <span id="api-status" class="dim"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>The pre-made sales-master system prompt</h2>
+      <p class="dim">This is the persona any connected LLM is forced to act with. Edit it freely — "Reset" restores the factory prompt.</p>
+      <textarea id="set-prompt" rows="14" placeholder="Leave empty to use the built-in sales-master prompt"></textarea>
+      <div class="row">
+        <button id="btn-save-prompt" class="primary">Save prompt</button>
+        <button id="btn-reset-prompt">Reset to pre-made</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Automation &amp; cursor — how mapping and replay behave</h2>
+      <div class="grid">
+        <label>Default after-delay per step (seconds) <input type="number" id="set-auto-delay" step="0.5" min="0" max="120" value="1"></label>
+        <label>Visual cursor speed
+          <select id="set-auto-speed"><option value="slow">slow &amp; showy</option><option value="normal" selected>normal</option><option value="fast">fast</option></select>
+        </label>
+        <label>Image-pick wait default (seconds) <input type="number" id="set-auto-img" min="5" max="300" value="40"></label>
+      </div>
+      <label class="rowline"><input type="checkbox" id="set-auto-visual" checked> Show the moving visual cursor during play (glide + click ripple + typing/scrolling bubbles)</label>
+      <label class="rowline"><input type="checkbox" id="set-auto-block" checked> Block armed clicks while mapping (safer — mapped clicks never actually fire on Facebook)</label>
+      <button id="btn-save-auto" class="primary">Save automation settings</button>
+      <span class="dim" style="font-size:12px">The ⚙ button inside the Facebook mapper edits these same settings on the go.</span>
+    </div>
+    <div class="card">
+      <h2>Daily learning &amp; permissions</h2>
+      <div class="grid">
+        <label>Web research permission
+          <select id="set-webperm">
+            <option value="ask">Ask me every time</option>
+            <option value="always">Always allow (needed for daily learning)</option>
+            <option value="never">Never use the web</option>
+          </select>
+        </label>
+        <label>Web-search budget / day <input type="number" id="set-webbudget" min="0" max="200"></label>
+        <label>Notifications / day <input type="number" id="set-notebudget" min="0" max="50"></label>
+        <label>Talkativeness
+          <select id="set-talk"><option value="friendly">Friendly &amp; talkative</option><option value="quiet">Concise</option></select>
+        </label>
+      </div>
+      <label class="rowline"><input type="checkbox" id="set-capture"> Capture pages I browse into memory (uncheck = full pause)</label>
+      <label class="rowline"><input type="checkbox" id="set-daily"> Daily web-search learning pass (9 PM, uses the budget above)</label>
+      <button id="btn-save-settings" class="primary">Save settings</button>
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+<script src="app.js" type="module"></script>
+</body>
+</html>
